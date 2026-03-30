@@ -115,13 +115,13 @@ The system follows a client-server architecture deployed on Vercel with Supabase
 The architecture diagram below illustrates the full system topology:
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                  Blackjack Card Counting Tutor                      │
-│                                                                     │
+┌────────────────────────────────────────────────────────────────────┐
+│                  Blackjack Card Counting Tutor                     │
+│                                                                    │
 │  ┌──────────────────────┐          ┌──────────────────┐            │
 │  │   Browser Client     │          │  Cloud LLM API   │            │
 │  │   HTML / CSS / JS    │          │  Haiku/GPT-4o-   │            │
-│  │                      │          │  mini             │            │
+│  │                      │          │  mini            │            │
 │  │  ┌────────────────┐  │          └────────▲─────────┘            │
 │  │  │  Tutorial UI   │  │                   │ HTTPS                │
 │  │  ├────────────────┤  │                   │                      │
@@ -133,29 +133,29 @@ The architecture diagram below illustrates the full system topology:
 │     HTTP │       │ JSON                     │                      │
 │  requests│       │ response                 │                      │
 │  ┌───────▼───────┴──────────────────────────┴──────────────┐       │
-│  │              Vercel (free tier) — Serverless Hosting     │       │
+│  │              Vercel (free tier) — Serverless Hosting    │       │
 │  │                                                         │       │
-│  │  ┌─────────────┐  ┌───────────────┐  ┌──────────────┐  │       │
-│  │  │ API Routes  │  │Prompt Builder │  │ Game Engine  │  │       │
-│  │  │ Serverless  │  │   Context     │  │ Deck, Count, │  │       │
-│  │  │ Functions   │  │   Assembly    │  │ Rules        │  │       │
-│  │  └─────────────┘  └───────────────┘  └──────────────┘  │       │
+│  │  ┌─────────────┐  ┌───────────────┐  ┌──────────────┐   │       │
+│  │  │ API Routes  │  │Prompt Builder │  │ Game Engine  │   │       │
+│  │  │ Serverless  │  │   Context     │  │ Deck, Count, │   │       │
+│  │  │ Functions   │  │   Assembly    │  │ Rules        │   │       │
+│  │  └─────────────┘  └───────────────┘  └──────────────┘   │       │
 │  │                                                         │       │
-│  │  ┌──────────────────┐  ┌────────────────────────────┐  │       │
-│  │  │Static File Serve │  │  Environment Variables     │  │       │
-│  │  │HTML/CSS/JS/assets│  │  API keys (secure)         │  │       │
-│  │  └──────────────────┘  └────────────────────────────┘  │       │
+│  │  ┌──────────────────┐  ┌────────────────────────────┐   │       │
+│  │  │Static File Serve │  │  Environment Variables     │   │       │
+│  │  │HTML/CSS/JS/assets│  │  API keys (secure)         │   │       │
+│  │  └──────────────────┘  └────────────────────────────┘   │       │
 │  └───────────────┬─────────────────────────────────────────┘       │
-│                  │ Supabase client                                  │
+│                  │ Supabase client                                 │
 │  ┌───────────────▼─────────────────────────────────────────┐       │
-│  │          Supabase (free tier)                            │       │
-│  │          Managed PostgreSQL + Auth                       │       │
+│  │          Supabase (free tier)                           │       │
+│  │          Managed PostgreSQL + Auth                      │       │
 │  │                                                         │       │
-│  │  ┌──────────┐  ┌────────────────┐  ┌───────────────┐   │       │
-│  │  │  Auth    │  │ User Sessions  │  │ Progress Data │   │       │
-│  │  └──────────┘  └────────────────┘  └───────────────┘   │       │
+│  │  ┌──────────┐  ┌────────────────┐  ┌───────────────┐    │       │
+│  │  │  Auth    │  │ User Sessions  │  │ Progress Data │    │       │
+│  │  └──────────┘  └────────────────┘  └───────────────┘    │       │
 │  └─────────────────────────────────────────────────────────┘       │
-└─────────────────────────────────────────────────────────────────────┘
+└────────────────────────────────────────────────────────────────────┘
 ```
 
 **Technology Stack:**
@@ -420,17 +420,17 @@ The landing page displays the application title at the top center. Below it, fou
 │                                                     │
 │              Blackjack Counting Tutor               │
 │                                                     │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐ │
-│  │ Level 1  │ │ Level 2  │ │ Level 3  │ │Level 4 │ │
-│  │          │ │          │ │  (locked)│ │(locked)│ │
-│  │          │ │          │ │          │ │        │ │
-│  └──────────┘ └──────────┘ └──────────┘ └────────┘ │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌────────┐  │
+│  │ Level 1  │ │ Level 2  │ │ Level 3  │ │Level 4 │  │
+│  │          │ │          │ │  (locked)│ │(locked)│  │
+│  │          │ │          │ │          │ │        │  │
+│  └──────────┘ └──────────┘ └──────────┘ └────────┘  │
 │                                                     │
 │  About                                              │
 │  ┌─────────────────────────────────────────────────┐│
-│  │ ████████████████████████████████████████████████ ││
-│  │ ████████████████████████████████████████████     ││
-│  │ ██████████████████████████████████               ││
+│  │ ████████████████████████████████████████████████││
+│  │ ████████████████████████████████████████████    ││
+│  │ ██████████████████████████████████              ││
 │  └─────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────┘
 ```
@@ -450,12 +450,12 @@ The **tutor panel** (right side, separated by a vertical divider) displays the L
 │  Probability          │  Count     │  Tutor                 │
 ├───────────────────────┴────────────┼──────────────────────  │
 │                                    │                        │
-│         Dealer cards               │  [LLM feedback and     │
-│  ┌──────────────────────────┐      │   tutorial dialogue     │
-│  │        ┌──────┐          │      │   displayed here.       │
+│         Dealer cards               │   LLM feedback and     │
+│  ┌──────────────────────────┐      │   tutorial dialogue    │
+│  │        ┌──────┐          │      │   displayed here.      │
 │  │        │ card │          │      │                        │
 │  │        └──────┘          │      │   Learner can ask      │
-│  │    (dealer half-oval)    │      │   follow-up questions.] │
+│  │    (dealer half-oval)    │      │   follow-up questions. │
 │  ├──────────────────────────┤      │                        │
 │  │    (player half-oval)    │      │                        │
 │  │                          │      │                        │
@@ -493,11 +493,11 @@ User            Browser Client       API Routes        Supabase         Game Eng
  │                   │                   │                │                 │
  │  Select Level N   │                   │                │                 │
  │──────────────────►│                   │                │                 │
- │                   │  GET /api/progress │                │                 │
+ │                   │  GET/api/progress │                │                 │
  │                   │──────────────────►│                │                 │
- │                   │                   │  SELECT progress│                │
+ │                   │                   │  SELECT progres│                 │
  │                   │                   │───────────────►│                 │
- │                   │                   │  {levels_done}  │                 │
+ │                   │                   │  {levels_done} │                 │
  │                   │                   │◄───────────────│                 │
  │                   │                   │                │                 │
  │                   │     alt [N <= levels_done + 1]     │                 │
@@ -505,10 +505,10 @@ User            Browser Client       API Routes        Supabase         Game Eng
  │                   │     │ POST /api/game/start(N)      │                 │
  │                   │     │─────────────┤                │                 │
  │                   │     │             │  initShoe(N)   │                 │
- │                   │     │             │───────────────────────────────►│
+ │                   │     │             │───────────────────────────────►  │
  │                   │     │             │  {game_state}  │                 │
- │                   │     │             │◄───────────────────────────────│
- │                   │     │  {game_state}│                │                │
+ │                   │     │             │◄───────────────────────────────  │
+ │                   │     │ {game_state}│                │                 │
  │                   │◄────┘             │                │                 │
  │  Render game UI   │                   │                │                 │
  │◄──────────────────│                   │                │                 │
@@ -582,14 +582,14 @@ User          Browser Client      API Routes       Game Engine       Prompt Buil
  │                │                  │                 │  buildPrompt     │              │
  │                │                  │                 │  (state, action, │              │
  │                │                  │                 │   evaluation)    │              │
- │                │                  │─────────────────────────────────►│              │
+ │                │                  │─────────────────────────────────►  │              │
  │                │                  │                 │  {prompt}        │              │
- │                │                  │◄─────────────────────────────────│              │
+ │                │                  │◄─────────────────────────────────  │              │
  │                │                  │                 │                  │  POST prompt │
- │                │                  │─────────────────────────────────────────────────►│
+ │                │                  │─────────────────────────────────────────────────► │
  │                │                  │                 │                  │  {response}  │
- │                │                  │◄─────────────────────────────────────────────────│
- │                │  {state, feedback}│                │                  │              │
+ │                │                  │◄───────────────────────────────────────────────── │
+ │                │ {state, feedback}│                 │                  │              │
  │                │◄─────────────────│                 │                  │              │
  │  Update cards, │                  │                 │                  │              │
  │  show feedback │                  │                 │                  │              │
@@ -669,9 +669,9 @@ User           Browser Client      API Routes       Prompt Builder      LLM API
  │                 │                  │  {system, msgs}  │                 │
  │                 │                  │◄─────────────────│                 │
  │                 │                  │                  │  POST prompt    │
- │                 │                  │─────────────────────────────────►│
+ │                 │                  │─────────────────────────────────►  │
  │                 │                  │                  │  {explanation}  │
- │                 │                  │◄─────────────────────────────────│
+ │                 │                  │◄─────────────────────────────────  │
  │                 │  {llm_response}  │                  │                 │
  │                 │◄─────────────────│                  │                 │
  │  Display in     │                  │                  │                 │
@@ -756,14 +756,14 @@ User           Browser Client      API Routes       Game Engine       Prompt Bui
  │                │                  │   edge: 0.02}   │                  │              │
  │                │                  │◄────────────────│                  │              │
  │                │                  │  buildPrompt    │                  │              │
- │                │                  │─────────────────────────────────►│              │
+ │                │                  │─────────────────────────────────►  │              │
  │                │                  │  {prompt}       │                  │              │
- │                │                  │◄─────────────────────────────────│              │
+ │                │                  │◄─────────────────────────────────  │              │
  │                │                  │  POST to LLM    │                  │              │
- │                │                  │─────────────────────────────────────────────────►│
+ │                │                  │─────────────────────────────────────────────────► │
  │                │                  │  {debrief text} │                  │              │
- │                │                  │◄─────────────────────────────────────────────────│
- │                │{eval + feedback}  │                 │                  │              │
+ │                │                  │◄───────────────────────────────────────────────── │
+ │                │{eval + feedback} │                 │                  │              │
  │                │◄─────────────────│                 │                  │              │
  │  Show results  │                  │                 │                  │              │
  │◄───────────────│                  │                 │                  │              │
