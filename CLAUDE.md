@@ -15,7 +15,7 @@ Priority order: **working > clean > scalable**. Ship a demo first. Abstract late
 | Layer | Choice | Upgrade Path |
 |---|---|---|
 | Frontend | Vanilla HTML/CSS/JS or React (single file or Vite) | Next.js |
-| LLM API | Anthropic Claude API (`claude-sonnet-4-20250514`) | Same, add streaming |
+| LLM API | Local Ollama (development-first; run `ollama` locally) — easily switchable to cloud LLMs such as Anthropic Claude | Use local Ollama for demo; cloud LLM (Anthropic) as upgrade |
 | Backend | None (direct browser → Anthropic API) | Node/Express or Next.js API routes |
 | Auth | None | Clerk or NextAuth |
 | DB | None / localStorage | Supabase or PlanetScale |
@@ -100,12 +100,18 @@ async function getTutorFeedback(context) {
 - **Never send PII or sensitive user data** to the API.
 - Rate-limit guard: debounce LLM calls by at minimum **1 second**.
 
+- **Local-first LLM (Ollama):** During demo development prefer a local Ollama instance for LLM calls (easier offline development, lower latency, and no remote API keys). Implement `tutor/llm.js` as a small provider adapter that routes to the active backend based on an environment flag (for example `LLM_PROVIDER=ollama|anthropic`). Keep provider-specific code isolated behind this adapter so switching to a cloud API is a single config change.
+
+- **Provider adapter guidance:** `tutor/llm.js` should export unified functions (e.g. `getTutorFeedback`, `getHint`, `getExplanation`) that internally call `ollama` when `LLM_PROVIDER=ollama` and call Anthropic-compatible functions when `LLM_PROVIDER=anthropic`. All calls must preserve the same `context` input shape and the same error-handling surface (try/catch, friendly messages).
+
 ### Prompt Design
 Every system prompt must specify:
 1. Role: what the tutor is
 2. Scope: what subject/game it covers
 3. Format: how to structure the response (length, tone, markdown or plain text)
 4. Constraint: what NOT to do (no off-topic answers, no giving away answers directly)
+
+When implementation or design choices are unclear (format details, tutoring policy, or game-specific constraints), consult `Blackjack_Tutor_SDD.md` for the authoritative specification and examples to guide development decisions.
 
 ---
 
