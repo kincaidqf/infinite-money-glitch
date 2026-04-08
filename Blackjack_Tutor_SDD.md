@@ -970,3 +970,7 @@ Automatically win on player 21
 Only show the probability in top left corner of the running count AFTER the hand (running/true count until that point, not including the current hand being played, the player has to keep track of current count)
 Potentially increase card size
 Split, handle multiple hands
+
+Keep track of wins/loss for correct decision vs incorrect decision - display at the end
+
+3 hands then tutor feedback -- keep track of last 3 hands
