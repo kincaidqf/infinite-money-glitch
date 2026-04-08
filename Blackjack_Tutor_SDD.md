@@ -963,3 +963,10 @@ The table below maps every Must Have functional and non-functional requirement f
 ---
 
 *This Software Design Document consolidates the Project Scope & Framework Document, Requirements Document, architecture sketches, UI mockups, and class lecture materials into a single authoritative reference for the Blackjack Card Counting Tutor project. All prior documents are superseded by this SDD.*
+
+
+# Things to fix
+Automatically win on player 21
+Only show the probability in top left corner of the running count AFTER the hand (running/true count until that point, not including the current hand being played, the player has to keep track of current count)
+Potentially increase card size
+Split, handle multiple hands
