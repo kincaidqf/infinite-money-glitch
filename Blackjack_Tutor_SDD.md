@@ -974,3 +974,7 @@ Split, handle multiple hands
 Keep track of wins/loss for correct decision vs incorrect decision - display at the end
 
 3 hands then tutor feedback -- keep track of last 3 hands
+
+Clarify that bust percentage is for you
+
+Manually input the count on level 3

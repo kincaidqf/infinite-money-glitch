@@ -6,6 +6,7 @@ import type { Level } from "@/lib/types";
 import type { Card } from "@/lib/cards";
 import { type DeckState, initShoe, dealCard, getTrueCount, getProbabilities } from "@/game/deckState";
 import { getCardImagePath, getBackImagePath, calculateHandValue, isBust } from "@/game/cardUtils";
+import { evaluateDecision, type DecisionResult, type UserAction } from "@/game/basicStrategy";
 
 type GamePhase = "idle" | "player" | "dealer" | "result";
 type Outcome = "player_win" | "dealer_win" | "push" | "player_bust" | "dealer_bust" | "blackjack";
@@ -16,6 +17,7 @@ interface GameState {
   dealerHand: Card[];
   phase: GamePhase;
   outcome: Outcome | null;
+  lastDecision: DecisionResult | null;
 }
 
 interface GameBoardProps {
@@ -27,14 +29,7 @@ function CardImage({ card, hidden = false }: { card: Card; hidden?: boolean }) {
   const label = hidden ? "Face-down card" : `${card.rank} of ${card.suit}`;
   return (
     <div className="card-slot">
-      <Image
-        src={src}
-        alt={label}
-        width={64}
-        height={88}
-        className="card-img"
-        priority
-      />
+      <Image src={src} alt={label} width={64} height={88} className="card-img" priority />
     </div>
   );
 }
@@ -55,7 +50,6 @@ const OUTCOME_MESSAGES: Record<Outcome, string> = {
 function resolveOutcome(playerHand: Card[], dealerHand: Card[]): Outcome {
   const playerTotal = calculateHandValue(playerHand);
   const dealerTotal = calculateHandValue(dealerHand);
-
   if (playerTotal === 21 && playerHand.length === 2) return "blackjack";
   if (playerTotal > 21) return "player_bust";
   if (dealerTotal > 21) return "dealer_bust";
@@ -71,74 +65,92 @@ export default function GameBoard({ level }: GameBoardProps) {
     dealerHand: [],
     phase: "idle",
     outcome: null,
+    lastDecision: null,
   });
 
   const deal = useCallback(() => {
     let deck = game.deck;
     const draws: Card[] = [];
-
     for (let i = 0; i < 4; i++) {
       const result = dealCard(deck);
       draws.push(result.card);
       deck = result.newState;
     }
-
-    // Deal order: player, dealer(up), player, dealer(hole/hidden)
+    // Deal order: player, dealer(up), player, dealer(hole)
     const playerHand = [draws[0], draws[2]];
     const dealerHand = [draws[1], draws[3]];
-
-    setGame({ deck, playerHand, dealerHand, phase: "player", outcome: null });
+    setGame({ deck, playerHand, dealerHand, phase: "player", outcome: null, lastDecision: null });
   }, [game.deck]);
 
-  const hit = useCallback(() => {
-    const { card, newState } = dealCard(game.deck);
-    const playerHand = [...game.playerHand, card];
-    if (isBust(playerHand)) {
-      setGame((g) => ({ ...g, deck: newState, playerHand, phase: "result", outcome: "player_bust" }));
-    } else {
-      setGame((g) => ({ ...g, deck: newState, playerHand }));
+  const makeDecision = useCallback((action: UserAction) => {
+    const { playerHand, dealerHand, deck } = game;
+    const doubleAvailable = playerHand.length === 2;
+    const decision = evaluateDecision(playerHand, dealerHand[0], action, doubleAvailable);
+
+    if (action === "hit") {
+      const { card, newState } = dealCard(deck);
+      const newPlayerHand = [...playerHand, card];
+      if (isBust(newPlayerHand)) {
+        setGame((g) => ({
+          ...g,
+          deck: newState,
+          playerHand: newPlayerHand,
+          phase: "result",
+          outcome: "player_bust",
+          lastDecision: decision,
+        }));
+      } else {
+        setGame((g) => ({ ...g, deck: newState, playerHand: newPlayerHand, lastDecision: decision }));
+      }
+      return;
     }
-  }, [game.deck, game.playerHand]);
 
-  const stand = useCallback(() => {
-    runDealerTurn(game);
-  }, [game]);
+    if (action === "stand") {
+      runDealerTurn({ ...game, lastDecision: decision });
+      return;
+    }
 
-  const double = useCallback(() => {
-    const { card, newState } = dealCard(game.deck);
-    const playerHand = [...game.playerHand, card];
-    if (isBust(playerHand)) {
-      setGame((g) => ({ ...g, deck: newState, playerHand, phase: "result", outcome: "player_bust" }));
-    } else {
-      runDealerTurn({ ...game, deck: newState, playerHand });
+    if (action === "double") {
+      const { card, newState } = dealCard(deck);
+      const newPlayerHand = [...playerHand, card];
+      if (isBust(newPlayerHand)) {
+        setGame((g) => ({
+          ...g,
+          deck: newState,
+          playerHand: newPlayerHand,
+          phase: "result",
+          outcome: "player_bust",
+          lastDecision: decision,
+        }));
+      } else {
+        runDealerTurn({ ...game, deck: newState, playerHand: newPlayerHand, lastDecision: decision });
+      }
     }
   }, [game]);
 
   function runDealerTurn(state: GameState) {
     let deck = state.deck;
     let dealerHand = [...state.dealerHand];
-
     while (calculateHandValue(dealerHand) < 17) {
       const result = dealCard(deck);
       dealerHand = [...dealerHand, result.card];
       deck = result.newState;
     }
-
     const outcome = resolveOutcome(state.playerHand, dealerHand);
     setGame({ ...state, deck, dealerHand, phase: "result", outcome });
   }
 
   const newHand = useCallback(() => {
-    // Reshuffle if fewer than 15 cards remain
     const deck = game.deck.shoe.length < 15 ? initShoe(game.deck.numDecks) : game.deck;
-    setGame((g) => ({ ...g, deck, playerHand: [], dealerHand: [], phase: "idle", outcome: null }));
+    setGame((g) => ({ ...g, deck, playerHand: [], dealerHand: [], phase: "idle", outcome: null, lastDecision: null }));
   }, [game.deck]);
 
-  const { deck, playerHand, dealerHand, phase, outcome } = game;
+  const { deck, playerHand, dealerHand, phase, outcome, lastDecision } = game;
   const playerTotal = playerHand.length > 0 ? calculateHandValue(playerHand) : null;
   const dealerVisible = phase === "result" || phase === "dealer";
   const dealerTotal = dealerVisible && dealerHand.length > 0 ? calculateHandValue(dealerHand) : null;
   const probs = getProbabilities(deck, playerTotal);
+  const doubleAvailable = playerHand.length === 2;
 
   const countSign = deck.runningCount > 0 ? "+" : "";
   const trueCount = getTrueCount(deck);
@@ -187,10 +199,7 @@ export default function GameBoard({ level }: GameBoardProps) {
           </p>
           <div className="felt-table__cards">
             {dealerHand.length === 0 ? (
-              <>
-                <EmptySlot />
-                <EmptySlot />
-              </>
+              <><EmptySlot /><EmptySlot /></>
             ) : (
               dealerHand.map((card, i) => (
                 <CardImage key={card.id} card={card} hidden={i === 1 && !dealerVisible} />
@@ -204,10 +213,7 @@ export default function GameBoard({ level }: GameBoardProps) {
         <div className="felt-table__player">
           <div className="felt-table__cards">
             {playerHand.length === 0 ? (
-              <>
-                <EmptySlot />
-                <EmptySlot />
-              </>
+              <><EmptySlot /><EmptySlot /></>
             ) : (
               playerHand.map((card) => (
                 <CardImage key={card.id} card={card} />
@@ -219,6 +225,12 @@ export default function GameBoard({ level }: GameBoardProps) {
           </p>
         </div>
       </div>
+
+      {lastDecision && (
+        <div className={`decision-feedback ${lastDecision.correct ? "decision-feedback--correct" : "decision-feedback--incorrect"}`}>
+          {lastDecision.message}
+        </div>
+      )}
 
       {outcome && (
         <div className={`result-banner result-banner--${outcome.includes("win") || outcome === "blackjack" ? "win" : outcome === "push" ? "push" : "lose"}`}>
@@ -232,10 +244,10 @@ export default function GameBoard({ level }: GameBoardProps) {
         )}
         {phase === "player" && (
           <>
-            <button className="action-btn" onClick={hit}>Hit</button>
-            <button className="action-btn" onClick={stand}>Stand</button>
-            {level !== 2 && playerHand.length === 2 && (
-              <button className="action-btn" onClick={double}>Double</button>
+            <button className="action-btn" onClick={() => makeDecision("hit")}>Hit</button>
+            <button className="action-btn" onClick={() => makeDecision("stand")}>Stand</button>
+            {level !== 2 && doubleAvailable && (
+              <button className="action-btn" onClick={() => makeDecision("double")}>Double</button>
             )}
           </>
         )}
