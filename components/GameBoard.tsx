@@ -22,6 +22,7 @@ interface GameState {
 
 interface GameBoardProps {
   level: Level;
+  onDecision?: (gameContext: string) => void;
 }
 
 function CardImage({ card, hidden = false }: { card: Card; hidden?: boolean }) {
@@ -58,7 +59,25 @@ function resolveOutcome(playerHand: Card[], dealerHand: Card[]): Outcome {
   return "push";
 }
 
-export default function GameBoard({ level }: GameBoardProps) {
+function buildGameContext(
+  playerHand: Card[],
+  dealerHand: Card[],
+  action: UserAction,
+  decision: DecisionResult
+): string {
+  const playerTotal = calculateHandValue(playerHand);
+  const dealerUp = dealerHand[0];
+  const cards = playerHand.map((c) => `${c.rank} of ${c.suit}`).join(", ");
+  const correct = decision.correct ? "correct" : "incorrect";
+  return (
+    `Player hand: ${cards} (total: ${playerTotal}). ` +
+    `Dealer upcard: ${dealerUp.rank} of ${dealerUp.suit}. ` +
+    `Player chose to ${action} — this was ${correct}. ` +
+    `Strategy note: ${decision.message}`
+  );
+}
+
+export default function GameBoard({ level, onDecision }: GameBoardProps) {
   const [game, setGame] = useState<GameState>({
     deck: initShoe(1),
     playerHand: [],
@@ -86,6 +105,7 @@ export default function GameBoard({ level }: GameBoardProps) {
     const { playerHand, dealerHand, deck } = game;
     const doubleAvailable = playerHand.length === 2;
     const decision = evaluateDecision(playerHand, dealerHand[0], action, doubleAvailable);
+    onDecision?.(buildGameContext(playerHand, dealerHand, action, decision));
 
     if (action === "hit") {
       const { card, newState } = dealCard(deck);

@@ -3,8 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 import GameHeader from "@/components/GameHeader";
-import GameBoard from "@/components/GameBoard";
-import TutorPanel from "@/components/TutorPanel";
+import GameSession from "@/components/GameSession";
 import type { Level, LevelStatus, UserProgress } from "@/lib/types";
 
 function deriveLevelStatus(progress: UserProgress | null, level: Level): LevelStatus {
@@ -44,10 +43,7 @@ export default async function GamePage({
   return (
     <div className="game-page">
       <GameHeader level={level} />
-      <div className="game-layout">
-        <GameBoard level={level} />
-        <TutorPanel />
-      </div>
+      <GameSession level={level} />
     </div>
   );
 }
