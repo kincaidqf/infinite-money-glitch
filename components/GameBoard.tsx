@@ -4,7 +4,7 @@ import { useState, useCallback } from "react";
 import Image from "next/image";
 import type { Level } from "@/lib/types";
 import type { Card } from "@/lib/cards";
-import { type DeckState, initShoe, dealCard, getTrueCount, getProbabilities } from "@/game/deckState";
+import { type DeckState, initShoe, dealCard, getTrueCount } from "@/game/deckState";
 import { getCardImagePath, getBackImagePath, calculateHandValue, isBust } from "@/game/cardUtils";
 import { evaluateDecision, type DecisionResult, type UserAction } from "@/game/basicStrategy";
 
@@ -22,7 +22,6 @@ interface GameState {
 
 interface GameBoardProps {
   level: Level;
-  onDecision?: (gameContext: string) => void;
 }
 
 function CardImage({ card, hidden = false }: { card: Card; hidden?: boolean }) {
@@ -59,25 +58,7 @@ function resolveOutcome(playerHand: Card[], dealerHand: Card[]): Outcome {
   return "push";
 }
 
-function buildGameContext(
-  playerHand: Card[],
-  dealerHand: Card[],
-  action: UserAction,
-  decision: DecisionResult
-): string {
-  const playerTotal = calculateHandValue(playerHand);
-  const dealerUp = dealerHand[0];
-  const cards = playerHand.map((c) => `${c.rank} of ${c.suit}`).join(", ");
-  const correct = decision.correct ? "correct" : "incorrect";
-  return (
-    `Player hand: ${cards} (total: ${playerTotal}). ` +
-    `Dealer upcard: ${dealerUp.rank} of ${dealerUp.suit}. ` +
-    `Player chose to ${action} — this was ${correct}. ` +
-    `Strategy note: ${decision.message}`
-  );
-}
-
-export default function GameBoard({ level, onDecision }: GameBoardProps) {
+export default function GameBoard({ level }: GameBoardProps) {
   const [game, setGame] = useState<GameState>({
     deck: initShoe(1),
     playerHand: [],
@@ -86,6 +67,8 @@ export default function GameBoard({ level, onDecision }: GameBoardProps) {
     outcome: null,
     lastDecision: null,
   });
+  const [sessionWins, setSessionWins] = useState(0);
+  const [sessionLosses, setSessionLosses] = useState(0);
 
   const deal = useCallback(() => {
     let deck = game.deck;
@@ -105,12 +88,12 @@ export default function GameBoard({ level, onDecision }: GameBoardProps) {
     const { playerHand, dealerHand, deck } = game;
     const doubleAvailable = playerHand.length === 2;
     const decision = evaluateDecision(playerHand, dealerHand[0], action, doubleAvailable);
-    onDecision?.(buildGameContext(playerHand, dealerHand, action, decision));
 
     if (action === "hit") {
       const { card, newState } = dealCard(deck);
       const newPlayerHand = [...playerHand, card];
       if (isBust(newPlayerHand)) {
+        setSessionLosses((l) => l + 1);
         setGame((g) => ({
           ...g,
           deck: newState,
@@ -134,6 +117,7 @@ export default function GameBoard({ level, onDecision }: GameBoardProps) {
       const { card, newState } = dealCard(deck);
       const newPlayerHand = [...playerHand, card];
       if (isBust(newPlayerHand)) {
+        setSessionLosses((l) => l + 1);
         setGame((g) => ({
           ...g,
           deck: newState,
@@ -157,6 +141,11 @@ export default function GameBoard({ level, onDecision }: GameBoardProps) {
       deck = result.newState;
     }
     const outcome = resolveOutcome(state.playerHand, dealerHand);
+    if (outcome === "player_win" || outcome === "dealer_bust" || outcome === "blackjack") {
+      setSessionWins((w) => w + 1);
+    } else if (outcome === "dealer_win") {
+      setSessionLosses((l) => l + 1);
+    }
     setGame({ ...state, deck, dealerHand, phase: "result", outcome });
   }
 
@@ -169,8 +158,9 @@ export default function GameBoard({ level, onDecision }: GameBoardProps) {
   const playerTotal = playerHand.length > 0 ? calculateHandValue(playerHand) : null;
   const dealerVisible = phase === "result" || phase === "dealer";
   const dealerTotal = dealerVisible && dealerHand.length > 0 ? calculateHandValue(dealerHand) : null;
-  const probs = getProbabilities(deck, playerTotal);
-  const doubleAvailable = playerHand.length === 2;
+  const doubleAvailable = phase === "player" && playerHand.length === 2;
+  const actionsActive = phase === "player";
+  const dealActive = phase === "idle" || phase === "result";
 
   const countSign = deck.runningCount > 0 ? "+" : "";
   const trueCount = getTrueCount(deck);
@@ -178,40 +168,48 @@ export default function GameBoard({ level, onDecision }: GameBoardProps) {
 
   return (
     <div className="game-board">
-      <div className="game-hud">
-        <div className="game-hud__stat">
-          <span className="game-hud__label">Cards Left</span>
-          <span className="game-hud__value">{deck.shoe.length}</span>
+
+      {/* Floor: top-left — probability / count HUD */}
+      <div className="floor-tl">
+        <div className="game-hud">
+          <div className="game-hud__stat">
+            <span className="game-hud__label">Cards Left</span>
+            <span className="game-hud__value">{deck.shoe.length}</span>
+          </div>
+          {level >= 2 && (
+            <>
+              <div className="game-hud__divider" />
+              <div className="game-hud__stat">
+                <span className="game-hud__label">Running Count</span>
+                <span className={`game-hud__value ${deck.runningCount > 0 ? "game-hud__value--pos" : deck.runningCount < 0 ? "game-hud__value--neg" : ""}`}>
+                  {countSign}{deck.runningCount}
+                </span>
+              </div>
+              <div className="game-hud__divider" />
+              <div className="game-hud__stat">
+                <span className="game-hud__label">True Count</span>
+                <span className={`game-hud__value ${trueCount > 0 ? "game-hud__value--pos" : trueCount < 0 ? "game-hud__value--neg" : ""}`}>
+                  {trueSign}{trueCount}
+                </span>
+              </div>
+            </>
+          )}
         </div>
-        {level >= 2 && (
-          <>
-            <div className="game-hud__divider" />
-            <div className="game-hud__stat">
-              <span className="game-hud__label">Running Count</span>
-              <span className={`game-hud__value ${deck.runningCount > 0 ? "game-hud__value--pos" : deck.runningCount < 0 ? "game-hud__value--neg" : ""}`}>
-                {countSign}{deck.runningCount}
-              </span>
-            </div>
-            <div className="game-hud__divider" />
-            <div className="game-hud__stat">
-              <span className="game-hud__label">True Count</span>
-              <span className={`game-hud__value ${trueCount > 0 ? "game-hud__value--pos" : trueCount < 0 ? "game-hud__value--neg" : ""}`}>
-                {trueSign}{trueCount}
-              </span>
-            </div>
-          </>
-        )}
-        {probs.bustProb !== null && phase === "player" && (
-          <>
-            <div className="game-hud__divider" />
-            <div className="game-hud__stat">
-              <span className="game-hud__label">Bust if Hit</span>
-              <span className="game-hud__value">{(probs.bustProb * 100).toFixed(0)}%</span>
-            </div>
-          </>
-        )}
       </div>
 
+      {/* Floor: top-right — session W/L */}
+      <div className="floor-tr">
+        <div className="session-record">
+          <span className="session-record__label">Session</span>
+          <span className="session-record__wl">
+            <span className="session-record__wins">W: {sessionWins}</span>
+            <span className="session-record__sep"> / </span>
+            <span className="session-record__losses">L: {sessionLosses}</span>
+          </span>
+        </div>
+      </div>
+
+      {/* Table */}
       <div className="felt-table">
         <div className="felt-table__dealer">
           <p className="felt-table__zone-label">
@@ -244,6 +242,12 @@ export default function GameBoard({ level, onDecision }: GameBoardProps) {
             Player{playerTotal !== null ? ` — ${playerTotal}` : ""}
           </p>
         </div>
+
+        {outcome && outcome !== "push" && (
+          <div className={`result-banner result-banner--${outcome === "player_win" || outcome === "blackjack" || outcome === "dealer_bust" ? "win" : "lose"}`}>
+            {OUTCOME_MESSAGES[outcome]}
+          </div>
+        )}
       </div>
 
       {lastDecision && (
@@ -252,29 +256,38 @@ export default function GameBoard({ level, onDecision }: GameBoardProps) {
         </div>
       )}
 
-      {outcome && (
-        <div className={`result-banner result-banner--${outcome.includes("win") || outcome === "blackjack" ? "win" : outcome === "push" ? "push" : "lose"}`}>
-          {OUTCOME_MESSAGES[outcome]}
-        </div>
-      )}
-
-      <div className="game-actions">
-        {phase === "idle" && (
-          <button className="action-btn action-btn--deal" onClick={deal}>Deal</button>
-        )}
-        {phase === "player" && (
-          <>
-            <button className="action-btn" onClick={() => makeDecision("hit")}>Hit</button>
-            <button className="action-btn" onClick={() => makeDecision("stand")}>Stand</button>
-            {level !== 2 && doubleAvailable && (
-              <button className="action-btn" onClick={() => makeDecision("double")}>Double</button>
-            )}
-          </>
-        )}
-        {phase === "result" && (
-          <button className="action-btn action-btn--deal" onClick={newHand}>New Hand</button>
-        )}
+      {/* Floor: bottom-left — action buttons (always visible) */}
+      <div className="floor-bl">
+        <button
+          className="action-btn"
+          onClick={() => makeDecision("hit")}
+          disabled={!actionsActive}
+        >Hit</button>
+        <button
+          className="action-btn"
+          onClick={() => makeDecision("stand")}
+          disabled={!actionsActive}
+        >Stand</button>
+        <button
+          className="action-btn"
+          onClick={() => makeDecision("double")}
+          disabled={!actionsActive || !doubleAvailable || level === 2}
+        >Double</button>
+        <button
+          className="action-btn"
+          disabled
+        >Split</button>
       </div>
+
+      {/* Floor: bottom-right — deal button (always visible) */}
+      <div className="floor-br">
+        <button
+          className="action-btn action-btn--deal"
+          onClick={phase === "result" ? newHand : deal}
+          disabled={!dealActive}
+        >Deal</button>
+      </div>
+
     </div>
   );
 }
