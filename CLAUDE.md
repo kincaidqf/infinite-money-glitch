@@ -28,20 +28,58 @@ Priority order: **working > clean > scalable**. Ship a demo first. Abstract late
 ## File Structure
 
 ```
-/
-├── index.html          # Entry point (or App.jsx if React)
-├── game/
-│   ├── GameBoard.js    # Core game logic (pure functions, no side effects)
-│   └── renderer.js     # Visual rendering (canvas or DOM)
-├── tutor/
-│   └── llm.js          # All Anthropic API calls live here
-├── styles/
-│   └── main.css
-├── CLAUDE.md           # This file
-└── .env.local          # API keys — NEVER commit
+app/
+  game/[level]/page.tsx     # Shared route — reads level, delegates to registry. DO NOT EDIT per-level.
+  api/tutor/route.ts        # Shared tutor API — routes to level-specific prompts. DO NOT EDIT per-level.
+  api/progress/route.ts     # User progress read/write
+  login/page.tsx            # Auth screen
+  page.tsx                  # Level select screen
+  globals.css               # Global styles + CSS custom properties
+components/
+  levels/                   # One component per level — each is team-owned
+    Level1Session.tsx       # ← Level 1 team owns this
+    Level2Session.tsx       # ← Level 2 team
+    Level3Session.tsx       # ← Level 3 team
+    Level4Session.tsx       # ← Level 4 team
+  GameBoard.tsx             # Shared card display
+  GameHeader.tsx            # Shared header bar
+  TutorPanel.tsx            # Shared tutor chat panel
+  LevelCard.tsx             # Level select card
+game/
+  levels/
+    registry.ts             # SHARED — pre-wired, no team edits this
+    level1/                 # ← Level 1 team owns this directory
+      index.ts              #   LevelModule default export
+      gameLogic.ts          #   Pure state functions
+      tutorPrompts.ts       #   System prompts for feedback/hint/explanation
+    level2/  ...            # ← Level 2 team
+    level3/  ...            # ← Level 3 team
+    level4/  ...            # ← Level 4 team
+  basicStrategy.ts          # Shared: Basic Strategy lookup + evaluateDecision
+  cardUtils.ts              # Shared: calculateHandValue, isSoft, isBust
+  deckState.ts              # Shared: shoe init, dealCard, getTrueCount, getProbabilities
+lib/
+  levelInterface.ts         # SHARED contract — LevelModule, TutorPrompts, LevelConfig
+  llm.ts                    # LLM provider adapter (Ollama / LiteLLM / Anthropic)
+  types.ts                  # Shared TypeScript types
+  useTutor.ts               # React hook for tutor API calls
+  supabase/                 # Browser + server Supabase clients
+supabase/
+  schema.sql                # Run in Supabase SQL editor to init tables + RLS
 ```
 
-Keep the structure flat. Add folders only when a category has 3+ files.
+### Levels architecture rule
+
+Each level lives in its own isolated directory. Teams work in parallel by owning disjoint files:
+
+| Team | Files they own |
+|------|---------------|
+| Level 1 | `game/levels/level1/**` + `components/levels/Level1Session.tsx` |
+| Level 2 | `game/levels/level2/**` + `components/levels/Level2Session.tsx` |
+| Level 3 | `game/levels/level3/**` + `components/levels/Level3Session.tsx` |
+| Level 4 | `game/levels/level4/**` + `components/levels/Level4Session.tsx` |
+
+The registry (`game/levels/registry.ts`), shared page, and tutor API are pre-wired — **level teams must not modify them**. This guarantees zero merge conflicts across level branches.
 
 ---
 
@@ -117,11 +155,11 @@ When implementation or design choices are unclear (format details, tutoring poli
 
 ## Game Component Rules (`game/`)
 
-- **Game logic is pure.** `GameBoard.js` exports functions that take state and return new state. No DOM manipulation inside game logic.
-- **Renderer is separate.** `renderer.js` reads state and updates the DOM or canvas.
-- Game state is a **single plain object** — serialize it easily with `JSON.stringify`.
-- Expose a `getGameContext()` function that returns a plain-English summary of current game state for LLM calls.
-- All game events that should trigger tutoring must emit through a single `onGameEvent(type, payload)` hook.
+- **Game logic is pure.** `game/levels/levelN/gameLogic.ts` exports functions that take state and return new state. No DOM manipulation, no React imports.
+- **Renderer is separate.** `components/levels/LevelNSession.tsx` reads state and updates the UI.
+- Game state is a **single plain object** per level — serialize it easily with `JSON.stringify`.
+- Each level's `gameLogic.ts` must export a `getLevelNGameContext(state)` function that returns a plain-English summary of current game state for LLM calls.
+- The `LevelModule` contract (`lib/levelInterface.ts`) is the authoritative interface. Every level must satisfy it.
 
 ---
 
