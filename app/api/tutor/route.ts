@@ -1,12 +1,16 @@
+// SHARED — Do NOT modify this file for level-specific changes.
+// To change tutor prompts for a level, edit:
+//   game/levels/levelN/tutorPrompts.ts
+
 import { getTutorFeedback, getTutorHint, getTutorExplanation } from "@/lib/llm";
+import { LEVEL_REGISTRY } from "@/game/levels/registry";
 import { NextRequest, NextResponse } from "next/server";
+import type { Level } from "@/lib/types";
 
 export async function POST(request: NextRequest) {
   try {
-    const { action, gameContext, topic } = await request.json();
+    const { action, gameContext, topic, level } = await request.json();
 
-    // Rate limiting: reject if called too frequently
-    // (In production, use a real rate limiter like Redis)
     const now = Date.now();
     const lastCallTime = parseInt(request.headers.get("x-last-call") || "0", 10);
     if (now - lastCallTime < 1000) {
@@ -15,6 +19,12 @@ export async function POST(request: NextRequest) {
         { status: 429 }
       );
     }
+
+    const levelNum = Number(level) as Level;
+    const levelModule = [1, 2, 3, 4].includes(levelNum)
+      ? LEVEL_REGISTRY[levelNum]
+      : null;
+    const prompts = levelModule?.tutorPrompts ?? null;
 
     let response: string;
 
@@ -26,7 +36,7 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        response = await getTutorFeedback(gameContext);
+        response = await getTutorFeedback(gameContext, prompts?.feedback ?? undefined);
         break;
 
       case "hint":
@@ -36,7 +46,7 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        response = await getTutorHint(gameContext);
+        response = await getTutorHint(gameContext, prompts?.hint ?? undefined);
         break;
 
       case "explain":
@@ -46,7 +56,7 @@ export async function POST(request: NextRequest) {
             { status: 400 }
           );
         }
-        response = await getTutorExplanation(topic);
+        response = await getTutorExplanation(topic, prompts?.explanation ?? undefined);
         break;
 
       default:

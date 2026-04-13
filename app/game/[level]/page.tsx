@@ -1,9 +1,12 @@
+// SHARED — Do NOT modify this file for level-specific changes.
+// To add level-specific UI, edit components/levels/LevelNSession.tsx.
+
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 import GameHeader from "@/components/GameHeader";
-import GameSession from "@/components/GameSession";
+import { LEVEL_REGISTRY } from "@/game/levels/registry";
 import type { Level, LevelStatus, UserProgress } from "@/lib/types";
 
 function deriveLevelStatus(progress: UserProgress | null, level: Level): LevelStatus {
@@ -40,10 +43,12 @@ export default async function GamePage({
   const status = deriveLevelStatus(progress ?? null, level);
   if (status === "locked") redirect("/");
 
+  const { LevelSession } = LEVEL_REGISTRY[level];
+
   return (
     <div className="game-page">
       <GameHeader level={level} />
-      <GameSession level={level} />
+      <LevelSession level={level} />
     </div>
   );
 }

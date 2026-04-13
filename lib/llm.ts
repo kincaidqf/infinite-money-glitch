@@ -119,11 +119,14 @@ async function callLLM(prompt: string, systemPrompt: string): Promise<string> {
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
-export async function getTutorFeedback(gameContext: string): Promise<string> {
+export async function getTutorFeedback(
+  gameContext: string,
+  systemPrompt: string = TUTOR_FEEDBACK_SYSTEM
+): Promise<string> {
   try {
     return await callLLM(
       `Game state: ${gameContext}\n\nGive feedback on the player's most recent decision.`,
-      TUTOR_FEEDBACK_SYSTEM
+      systemPrompt
     );
   } catch (err) {
     console.error("getTutorFeedback failed:", err);
@@ -131,11 +134,14 @@ export async function getTutorFeedback(gameContext: string): Promise<string> {
   }
 }
 
-export async function getTutorHint(gameContext: string): Promise<string> {
+export async function getTutorHint(
+  gameContext: string,
+  systemPrompt: string = TUTOR_HINT_SYSTEM
+): Promise<string> {
   try {
     return await callLLM(
       `Game state: ${gameContext}\n\nGive a hint to help the player decide their next move.`,
-      TUTOR_HINT_SYSTEM
+      systemPrompt
     );
   } catch (err) {
     console.error("getTutorHint failed:", err);
@@ -143,9 +149,12 @@ export async function getTutorHint(gameContext: string): Promise<string> {
   }
 }
 
-export async function getTutorExplanation(topic: string): Promise<string> {
+export async function getTutorExplanation(
+  topic: string,
+  systemPrompt: string = TUTOR_EXPLANATION_SYSTEM
+): Promise<string> {
   try {
-    return await callLLM(`Explain: ${topic}`, TUTOR_EXPLANATION_SYSTEM);
+    return await callLLM(`Explain: ${topic}`, systemPrompt);
   } catch (err) {
     console.error("getTutorExplanation failed:", err);
     return "Explanation unavailable. Try again.";
