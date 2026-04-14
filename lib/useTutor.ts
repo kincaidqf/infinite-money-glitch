@@ -10,7 +10,8 @@ export function useTutor(options: UseTutorOptions = {}) {
 
   const callTutor = async (
     action: "feedback" | "hint" | "explain",
-    gameContextOrTopic: string
+    gameContextOrTopic: string,
+    level?: number
   ): Promise<string | null> => {
     setLoading(true);
     setError(null);
@@ -18,8 +19,8 @@ export function useTutor(options: UseTutorOptions = {}) {
     try {
       const payload =
         action === "explain"
-          ? { action, topic: gameContextOrTopic }
-          : { action, gameContext: gameContextOrTopic };
+          ? { action, topic: gameContextOrTopic, level }
+          : { action, gameContext: gameContextOrTopic, level };
 
       const response = await fetch("/api/tutor", {
         method: "POST",

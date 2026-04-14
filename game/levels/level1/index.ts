@@ -12,10 +12,10 @@ import Level1Session from "@/components/levels/Level1Session";
 const level1Module: LevelModule = {
   config: {
     id: 1,
-    title: "Basic Strategy",
+    title: "Probability Basics",
     description:
-      "Master optimal hit/stand/double decisions based on your hand total and the dealer upcard.",
-    passCriteria: "≥70% correct Basic Strategy decisions across a full simulated shoe",
+      "Learn why 31% of cards are worth 10 points and how that single probability shapes every hit/stand decision.",
+    passCriteria: "5 consecutive correct probability-based hit/stand decisions in a row",
   },
   tutorPrompts,
   LevelSession: Level1Session,
