@@ -16,7 +16,7 @@ const level3Module: LevelModule = {
     description:
       "Maintain count accuracy, calculate true count (RC ÷ decks remaining), and identify index play opportunities.",
     passCriteria:
-      "≥75% count accuracy and ≥70% decision accuracy across a full simulated session",
+      "5 correct decisions in a row",
   },
   tutorPrompts,
   LevelSession: Level3Session,
