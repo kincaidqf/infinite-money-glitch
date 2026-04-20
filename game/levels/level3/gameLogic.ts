@@ -109,14 +109,17 @@ export function dealInitialCards(state: Level3State): Level3State {
     draws.push(card);
     s = next;
   }
+  const playerHand = [draws[0], draws[2]];
+  const dealerHand = [draws[1], draws[3]];
+  const phase = calculateHandValue(playerHand) === 21 ? "count-entry" : "player-turn";
   return {
     ...state,
     shoe: s,
-    playerHand: [draws[0], draws[2]],
-    dealerHand: [draws[1], draws[3]],
+    playerHand,
+    dealerHand,
     runningCount: s.runningCount,
     trueCount: getTrueCount(s.runningCount, s.shoe.length / 52),
-    phase: "player-turn",
+    phase,
     playerEnteredCount: null,
     roundDecisionCorrect: true,
     lastIndexPlay: null,
@@ -150,10 +153,11 @@ export function applyPlayerAction(state: Level3State, action: UserAction): Level
   }
 
   const bust = isBust(newHand);
+  const got21 = !bust && calculateHandValue(newHand) === 21;
   const nextPhase: Level3State["phase"] =
     action === "stand" ? "dealer-turn"
     : action === "double" && !bust ? "dealer-turn"
-    : bust ? "count-entry"
+    : bust || got21 ? "count-entry"
     : "player-turn";
 
   return {
