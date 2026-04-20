@@ -966,15 +966,10 @@ The table below maps every Must Have functional and non-functional requirement f
 
 
 # Things to fix
-Automatically win on player 21
-Only show the probability in top left corner of the running count AFTER the hand (running/true count until that point, not including the current hand being played, the player has to keep track of current count)
-Potentially increase card size
-Split, handle multiple hands
+[Kincaid] Automatically win on player 21
 
-Keep track of wins/loss for correct decision vs incorrect decision - display at the end
+Link to basic rules of blackjack
 
-3 hands then tutor feedback -- keep track of last 3 hands
+Clear road map of what the level contains (each stage & goals)
 
-Clarify that bust percentage is for you
-
-Manually input the count on level 3
+[Kincaid] When decision wrong - fill out fraction with probability of busting if you hit
