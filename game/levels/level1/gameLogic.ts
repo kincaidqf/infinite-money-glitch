@@ -145,6 +145,21 @@ export function startNewHand(state: Level1State): Level1State {
   ({ card: d2, newState: shoe } = dealCard(shoe));
 
   const playerHand = [p1, p2];
+  if (calculateHandValue(playerHand) === 21) {
+    return {
+      ...state,
+      shoe,
+      playerHand,
+      dealerHand: [d1, d2],
+      phase: "round-over",
+      dealerBustProbability: getDealerBustProbability(d1),
+      playerBustProbability: null,
+      firstActionDone: false,
+      lastOutcome: "win",
+      lastDecisionCorrect: null,
+      sessionWins: state.sessionWins + 1,
+    };
+  }
   return {
     ...state,
     shoe,
@@ -189,6 +204,7 @@ export function applyPlayerHit(state: Level1State): Level1State {
   ({ card, newState: shoe } = dealCard(shoe));
   const playerHand = [...state.playerHand, card];
   const busted = isBust(playerHand);
+  const got21 = !busted && calculateHandValue(playerHand) === 21;
 
   const decisionUpdates = state.firstActionDone ? {} : recordDecision(state, "hit");
 
@@ -197,10 +213,11 @@ export function applyPlayerHit(state: Level1State): Level1State {
     ...decisionUpdates,
     shoe,
     playerHand,
-    phase: busted ? "round-over" : "player-turn",
-    playerBustProbability: busted ? null : getPlayerBustProbability(playerHand),
-    lastOutcome: busted ? "loss" : state.lastOutcome,
+    phase: busted || got21 ? "round-over" : "player-turn",
+    playerBustProbability: busted || got21 ? null : getPlayerBustProbability(playerHand),
+    lastOutcome: busted ? "loss" : got21 ? "win" : state.lastOutcome,
     sessionLosses: busted ? state.sessionLosses + 1 : state.sessionLosses,
+    sessionWins: got21 ? state.sessionWins + 1 : state.sessionWins,
   };
 }
 

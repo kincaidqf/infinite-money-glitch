@@ -171,6 +171,28 @@ export function startNewHand(state: Level2State): Level2State {
   const playerHand = [p1, p2];
   const tenProb = getTenValueProbabilityNow(shoe);
 
+  if (calculateHandValue(playerHand) === 21) {
+    return {
+      ...state,
+      shoe,
+      playerHand,
+      dealerHand: [d1, d2],
+      phase: "round-over",
+      runningCount,
+      handStartCount: startCount,
+      handRunningCount: runningCount,
+      cardCountValues,
+      currentCardIndex: 4,
+      playerDirectionInput: null,
+      lastInputCorrect: null,
+      lastOutcome: "win",
+      lastDecisionCorrect: null,
+      tenValueProbabilityNow: tenProb,
+      dealerBustProbability: getDealerBustProbability(d1),
+      playerBustProbability: null,
+      sessionWins: state.sessionWins + 1,
+    };
+  }
   return {
     ...state,
     shoe,
@@ -199,6 +221,7 @@ export function applyPlayerHit(state: Level2State): Level2State {
 
   const playerHand = [...state.playerHand, card];
   const busted = isBust(playerHand);
+  const got21 = !busted && calculateHandValue(playerHand) === 21;
   const tenProb = getTenValueProbabilityNow(shoe);
 
   return {
@@ -209,11 +232,12 @@ export function applyPlayerHit(state: Level2State): Level2State {
     handRunningCount: runningCount,
     cardCountValues,
     currentCardIndex: state.currentCardIndex + 1,
-    phase: busted ? "round-over" : "player-turn",
+    phase: busted || got21 ? "round-over" : "player-turn",
     tenValueProbabilityNow: tenProb,
-    playerBustProbability: busted ? null : getPlayerBustProbabilityNow(playerHand, shoe),
-    lastOutcome: busted ? "loss" : state.lastOutcome,
+    playerBustProbability: busted || got21 ? null : getPlayerBustProbabilityNow(playerHand, shoe),
+    lastOutcome: busted ? "loss" : got21 ? "win" : state.lastOutcome,
     sessionLosses: busted ? state.sessionLosses + 1 : state.sessionLosses,
+    sessionWins: got21 ? state.sessionWins + 1 : state.sessionWins,
   };
 }
 

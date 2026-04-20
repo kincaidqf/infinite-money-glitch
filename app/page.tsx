@@ -51,6 +51,17 @@ export default async function HomePage() {
           system, true count calculation, and finally advanced bet-sizing techniques. An
           AI-powered tutor provides immediate, contextual feedback on every decision.
         </p>
+        <p className="about-section__body" style={{ marginTop: "0.75rem" }}>
+          New to blackjack?{" "}
+          <a
+            href="https://www.playusa.com/blackjack/rules/"
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "var(--color-chip-gold)", textDecoration: "underline" }}
+          >
+            Read the basic rules here.
+          </a>
+        </p>
       </section>
     </main>
   );
