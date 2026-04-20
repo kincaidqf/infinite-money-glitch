@@ -3,16 +3,19 @@ export interface BustQuizData {
   handTotal: number;
   isSoftHand: boolean;
   dealerUpcardRank: string;
-  // For wrong hit (should have stood): ranks that would cause a bust
+  // Wrong hit: ranks/cards that would bust
   bustCardRanks: string[];
   bustCardCount: number;
   bustProbability: number;
-  // For wrong stand (should have hit): best single-card improvement
+  // Wrong stand: best single-card improvement
   bestImprovementCards: string[];
   bestImprovementTotal: number;
   bestImprovementCount: number;
   bestImprovementProbability: number;
 }
+
+// Quiz progresses: 1 = asking ranks/best-card, 2 = asking total cards, 3 = complete
+export type QuizStep = 1 | 2 | 3;
 
 // Ace = 1 when hitting a hard hand (ace as 11 would bust any total >= 11)
 const RANK_BUST_CHECK: Array<[string, number, number]> = [
@@ -82,66 +85,162 @@ export function computeBustQuizData(
   };
 }
 
-export function getStage5QuizContext(quiz: BustQuizData): string {
+// ─── Answer evaluation (all math done here, never by the LLM) ────────────────
+
+function parseIntFromAnswer(answer: string): number | null {
+  const match = answer.match(/\d+/);
+  return match ? parseInt(match[0], 10) : null;
+}
+
+const TEN_VALUE_SET = new Set(["10", "king", "queen", "jack"]);
+
+function normalizeCardName(card: string): string {
+  const s = card.toLowerCase().trim();
+  if (s === "a" || s.includes("ace")) return "ace";
+  if (s === "k" || s.includes("king")) return "king";
+  if (s === "q" || s.includes("queen")) return "queen";
+  if (s === "j" || s.includes("jack")) return "jack";
+  if (s === "10" || s.includes("ten") || s.includes("face") || s.includes("10-value")) return "10";
+  const m = s.match(/\d+/);
+  return m ? m[0] : s;
+}
+
+function formatBestCards(cards: string[]): string {
+  const tenValues = new Set(["K", "Q", "J", "10"]);
+  if (cards.length > 1 && cards.every(c => tenValues.has(c))) return "10-value cards (10, J, Q, K)";
+  return cards.length === 1 ? cards[0] : cards.join(", ");
+}
+
+export function evaluateStep1(quiz: BustQuizData, studentAnswer: string): { correct: boolean; hint: string } {
   if (quiz.playerAction === "hit") {
-    const pct = Math.round(quiz.bustProbability * 100);
-    return [
-      "Stage 5 Probability Quiz — Player hit when they should have stood.",
-      `Player hand before that hit: Hard ${quiz.handTotal}. Dealer upcard: ${quiz.dealerUpcardRank}.`,
-      `Correct action was: Stand.`,
-      "",
-      `Quiz task: Ask the student how many different CARD RANKS in a standard 52-card deck would cause a bust if dealt to a hard ${quiz.handTotal}.`,
-      `Do NOT reveal the answer yet. Ask the question and wait for the student to respond.`,
-      `Correct answer: ${quiz.bustCardRanks.length} bust ranks (${quiz.bustCardRanks.join(", ")}) x 4 cards each = ${quiz.bustCardCount} out of 52 = ${pct}% bust chance.`,
-      `After they answer: confirm or correct, then explain the full calculation. Note we use 52 as the denominator for simplicity — in practice it shrinks as cards leave the deck.`,
-      `Ask the question in 1-2 plain sentences. No special characters.`,
-    ].join("\n");
+    const parsed = parseIntFromAnswer(studentAnswer);
+    const expected = quiz.bustCardRanks.length;
+    if (parsed === expected) return { correct: true, hint: "" };
+    const hint = parsed === null
+      ? `Give a number. Count how many distinct card ranks satisfy: ${quiz.handTotal} + rank value > 21.`
+      : parsed < expected
+      ? `Think higher. Some larger card values also push ${quiz.handTotal} over 21.`
+      : `That is too many. Only count the ranks where ${quiz.handTotal} plus that card value exceeds 21.`;
+    return { correct: false, hint };
   }
 
-  const cardLabel = quiz.bestImprovementCards.length === 1
-    ? quiz.bestImprovementCards[0]
-    : quiz.bestImprovementCards.join(" or ");
-  const pct = Math.round(quiz.bestImprovementProbability * 100);
+  // Wrong stand: check card name match
+  const normalized = normalizeCardName(studentAnswer);
+  const bestNormalized = quiz.bestImprovementCards.map(c => normalizeCardName(c));
+  const allBestAreTen = bestNormalized.every(c => TEN_VALUE_SET.has(c));
+  const studentIsTen = TEN_VALUE_SET.has(normalized);
+  const correct = bestNormalized.includes(normalized) || (allBestAreTen && studentIsTen);
+  if (correct) return { correct: true, hint: "" };
+  return {
+    correct: false,
+    hint: `Think about which single card added to ${quiz.handTotal} brings you closest to 21 without going over.`,
+  };
+}
 
+export function evaluateStep2(quiz: BustQuizData, studentAnswer: string): { correct: boolean; hint: string } {
+  const parsed = parseIntFromAnswer(studentAnswer);
+  const expected = quiz.playerAction === "hit" ? quiz.bustCardCount : quiz.bestImprovementCount;
+  if (parsed === expected) return { correct: true, hint: "" };
+  if (quiz.playerAction === "hit") {
+    const n = quiz.bustCardRanks.length;
+    return { correct: false, hint: `There are 4 suits per rank. Try: ${n} ranks x 4.` };
+  }
+  const cardLabel = formatBestCards(quiz.bestImprovementCards);
+  return { correct: false, hint: `Count how many ${cardLabel} exist in a standard 52-card deck.` };
+}
+
+// ─── LLM context builders — all numbers pre-computed, no LLM math ─────────────
+
+export function getStage5QuizInitialContext(quiz: BustQuizData): string {
+  if (quiz.playerAction === "hit") {
+    return [
+      `Stage 5 Probability Quiz (step 1 of 2) — player hit hard ${quiz.handTotal}, should have stood. Dealer upcard: ${quiz.dealerUpcardRank}.`,
+      `Task: Ask exactly this question: "With a hard ${quiz.handTotal}, how many different card ranks in a standard deck would cause you to bust if you drew one more card?"`,
+      `Do not give any numbers, hints, or examples. Ask the question in 1-2 sentences only. Plain text.`,
+    ].join("\n");
+  }
   return [
-    "Stage 5 Probability Quiz — Player stood when they should have hit.",
-    `Player hand: Hard ${quiz.handTotal}. Dealer upcard: ${quiz.dealerUpcardRank}.`,
-    `Correct action was: Hit.`,
-    "",
-    `Quiz task: Ask the student what single card (or group of same-value cards) would give the HIGHEST possible hand total without busting from a hard ${quiz.handTotal}.`,
-    `Do NOT reveal the answer yet. Ask the question and wait for the student to respond.`,
-    `Correct answer: ${cardLabel} gives a total of ${quiz.bestImprovementTotal}. That is ${quiz.bestImprovementCount} cards out of 52 = ${pct}%.`,
-    `After they answer: confirm or correct, then explain why this is the best single draw. Note we use 52 as the denominator for simplicity.`,
-    `Ask the question in 1-2 plain sentences. No special characters.`,
+    `Stage 5 Probability Quiz (step 1 of 2) — player stood on hard ${quiz.handTotal}, should have hit. Dealer upcard: ${quiz.dealerUpcardRank}.`,
+    `Task: Ask exactly this question: "With a hard ${quiz.handTotal}, what single card value would give you the highest possible total without busting?"`,
+    `Do not reveal the answer or give hints. Ask the question in 1-2 sentences only. Plain text.`,
   ].join("\n");
 }
 
-export function getStage5QuizAnswerContext(quiz: BustQuizData, studentAnswer: string): string {
+export function getStage5QuizStep1EvalContext(
+  quiz: BustQuizData,
+  studentAnswer: string,
+  correct: boolean,
+  hint: string
+): string {
   if (quiz.playerAction === "hit") {
-    const pct = Math.round(quiz.bustProbability * 100);
+    const n = quiz.bustCardRanks.length;
+    const ranks = quiz.bustCardRanks.join(", ");
+    if (correct) {
+      return [
+        `Step 1 result: Student answered "${studentAnswer}" — CORRECT. The ${n} bust ranks are: ${ranks}.`,
+        `Task: Briefly confirm they are correct (1 sentence). Then ask: "Each rank has 4 cards in a standard deck, one per suit — so how many total cards out of 52 would cause a bust?" Do not give the number. Plain text only.`,
+      ].join("\n");
+    }
     return [
-      "Stage 5 Probability Quiz — Student is answering the bust-card question.",
-      `Player hand before hit: Hard ${quiz.handTotal}. Dealer upcard: ${quiz.dealerUpcardRank}.`,
-      `Student answered: "${studentAnswer}"`,
-      `Correct answer: ${quiz.bustCardRanks.length} bust ranks (${quiz.bustCardRanks.join(", ")}) x 4 cards each = ${quiz.bustCardCount} out of 52 = ${pct}% bust chance.`,
-      `Task: Confirm or correct the student's answer. Walk through: each rank has 4 cards, so ${quiz.bustCardRanks.length} ranks x 4 = ${quiz.bustCardCount}. ${quiz.bustCardCount}/52 = ${pct}%.`,
-      `Remind them: we use 52 for simplicity; in practice the denominator changes as cards are dealt.`,
-      `Keep to 3-4 sentences. Plain text only. No special characters.`,
+      `Step 1 result: Student answered "${studentAnswer}" — INCORRECT. Correct answer: ${n} ranks.`,
+      `Hint to deliver verbatim: "${hint}"`,
+      `Task: Tell them that is not right (1 sentence). Deliver the hint exactly as written. Do NOT reveal the correct count or any rank names. Ask them to try again. Plain text only.`,
     ].join("\n");
   }
 
-  const cardLabel = quiz.bestImprovementCards.length === 1
-    ? quiz.bestImprovementCards[0]
-    : quiz.bestImprovementCards.join(" or ");
-  const pct = Math.round(quiz.bestImprovementProbability * 100);
-
+  const cardLabel = formatBestCards(quiz.bestImprovementCards);
+  const total = quiz.bestImprovementTotal;
+  if (correct) {
+    return [
+      `Step 1 result: Student answered "${studentAnswer}" — CORRECT. ${cardLabel} gives a total of ${total}.`,
+      `Task: Briefly confirm they are correct (1 sentence). Then ask: "How many ${cardLabel} cards are there in a standard 52-card deck?" Do not give the number. Plain text only.`,
+    ].join("\n");
+  }
   return [
-    "Stage 5 Probability Quiz — Student is answering the best-improvement-card question.",
-    `Player hand: Hard ${quiz.handTotal}. Dealer upcard: ${quiz.dealerUpcardRank}.`,
-    `Student answered: "${studentAnswer}"`,
-    `Correct answer: ${cardLabel} gives a total of ${quiz.bestImprovementTotal}. That is ${quiz.bestImprovementCount} cards out of 52 = ${pct}%.`,
-    `Task: Confirm or correct the student's answer. Explain why ${cardLabel} is the best single draw from a hard ${quiz.handTotal}.`,
-    `Remind them: we use 52 for simplicity; in practice the denominator changes as cards are dealt.`,
-    `Keep to 3-4 sentences. Plain text only. No special characters.`,
+    `Step 1 result: Student answered "${studentAnswer}" — INCORRECT. Correct answer: ${cardLabel} (gives total of ${total}).`,
+    `Hint to deliver verbatim: "${hint}"`,
+    `Task: Tell them that is not right (1 sentence). Deliver the hint exactly as written. Do NOT reveal the correct card. Ask them to try again. Plain text only.`,
+  ].join("\n");
+}
+
+export function getStage5QuizStep2EvalContext(
+  quiz: BustQuizData,
+  studentAnswer: string,
+  correct: boolean,
+  hint: string
+): string {
+  if (quiz.playerAction === "hit") {
+    const n = quiz.bustCardRanks.length;
+    const total = quiz.bustCardCount;
+    const pct = Math.round(quiz.bustProbability * 100);
+    if (correct) {
+      return [
+        `Step 2 result: Student answered "${studentAnswer}" — CORRECT. ${n} ranks x 4 = ${total} out of 52.`,
+        `Task: Confirm they are correct (1 sentence). Then give the final explanation using only these numbers: ${total} bust cards out of 52 equals ${pct}% chance of busting on that hit. Close by stating that this is why hard ${quiz.handTotal} is always a stand. Add one sentence noting the denominator shrinks in practice as cards are dealt but the principle holds.`,
+        `3 sentences total. Plain text only.`,
+      ].join("\n");
+    }
+    return [
+      `Step 2 result: Student answered "${studentAnswer}" — INCORRECT. Correct answer: ${total}.`,
+      `Hint to deliver verbatim: "${hint}"`,
+      `Task: Tell them that is not right (1 sentence). Deliver the hint exactly as written. Do NOT reveal the correct total. Ask them to try again. Plain text only.`,
+    ].join("\n");
+  }
+
+  const count = quiz.bestImprovementCount;
+  const pct = Math.round(quiz.bestImprovementProbability * 100);
+  const cardLabel = formatBestCards(quiz.bestImprovementCards);
+  const bestTotal = quiz.bestImprovementTotal;
+  if (correct) {
+    return [
+      `Step 2 result: Student answered "${studentAnswer}" — CORRECT. There are ${count} ${cardLabel} cards.`,
+      `Task: Confirm they are correct (1 sentence). Then give the final explanation using only these numbers: ${count} out of 52 equals ${pct}% chance of drawing ${cardLabel} for a total of ${bestTotal}. Hitting was correct because you cannot bust on hard ${quiz.handTotal} in one draw. Add one sentence noting the denominator shrinks in practice as cards are dealt but the principle holds.`,
+      `3 sentences total. Plain text only.`,
+    ].join("\n");
+  }
+  return [
+    `Step 2 result: Student answered "${studentAnswer}" — INCORRECT. Correct answer: ${count}.`,
+    `Hint to deliver verbatim: "${hint}"`,
+    `Task: Tell them that is not right (1 sentence). Deliver the hint exactly as written. Do NOT reveal the correct count. Ask them to try again. Plain text only.`,
   ].join("\n");
 }

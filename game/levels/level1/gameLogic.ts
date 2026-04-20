@@ -3,7 +3,7 @@ import type { DeckState } from "@/game/deckState";
 import { calculateHandValue, isSoft, isBust } from "@/game/cardUtils";
 import { getBasicStrategyAction } from "@/game/basicStrategy";
 import { initShoe, dealCard } from "@/game/deckState";
-import type { BustQuizData } from "./quizLogic";
+import type { BustQuizData, QuizStep } from "./quizLogic";
 
 export type Level1Stage = 1 | 2 | 3 | 4 | 5;
 export type Level1Phase =
@@ -45,7 +45,7 @@ export interface Level1State {
   lastWrongDecisionTotal: number | null;
   lastWrongDecisionSoft: boolean | null;
   bustQuizData: BustQuizData | null;
-  bustQuizAnswered: boolean;
+  bustQuizStep: QuizStep;
 }
 
 // 16 of 52 cards are 10-value (10, J, Q, K × 4 suits) — the foundational probability of Level 1
@@ -130,7 +130,7 @@ export function getInitialLevel1State(): Level1State {
     lastWrongDecisionTotal: null,
     lastWrongDecisionSoft: null,
     bustQuizData: null,
-    bustQuizAnswered: false,
+    bustQuizStep: 1,
   };
 }
 
@@ -160,7 +160,7 @@ export function startNewHand(state: Level1State): Level1State {
     lastWrongDecisionTotal: null,
     lastWrongDecisionSoft: null,
     bustQuizData: null,
-    bustQuizAnswered: false,
+    bustQuizStep: 1,
   };
 }
 
