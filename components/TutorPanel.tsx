@@ -53,13 +53,17 @@ export default function TutorPanel({
               key={i}
               className={`tutor-panel__message tutor-panel__message--${msg.role}`}
             >
-              {msg.text}
+              <span className="tutor-panel__role">
+                {msg.role === "tutor" ? "TUTOR" : "YOU"}
+              </span>
+              <span className="tutor-panel__text">{msg.text}</span>
             </div>
           ))
         )}
         {loading && (
           <div className="tutor-panel__message tutor-panel__message--tutor tutor-panel__message--loading">
-            Thinking…
+            <span className="tutor-panel__role">TUTOR</span>
+            <span className="tutor-panel__text">Thinking...</span>
           </div>
         )}
         <div ref={bottomRef} />
