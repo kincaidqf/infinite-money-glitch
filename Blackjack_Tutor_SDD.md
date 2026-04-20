@@ -973,3 +973,5 @@ Link to basic rules of blackjack
 Clear road map of what the level contains (each stage & goals)
 
 [Kincaid] When decision wrong - fill out fraction with probability of busting if you hit
+
+Showing extra card sometimes
