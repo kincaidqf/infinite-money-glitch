@@ -3,6 +3,7 @@ import type { DeckState } from "@/game/deckState";
 import { calculateHandValue, isSoft, isBust } from "@/game/cardUtils";
 import { getBasicStrategyAction } from "@/game/basicStrategy";
 import { initShoe, dealCard } from "@/game/deckState";
+import type { BustQuizData, QuizStep } from "./quizLogic";
 
 export type Level1Stage = 1 | 2 | 3 | 4 | 5;
 export type Level1Phase =
@@ -11,6 +12,7 @@ export type Level1Phase =
   | "dealer-turn"
   | "round-over"
   | "tutor-feedback"
+  | "bust-quiz"
   | "session-over";
 
 export const STAGE2_HAND_COUNT = 3;
@@ -39,6 +41,11 @@ export interface Level1State {
   stage4HandsPlayed: number;
   stage4IntroShown: boolean;
   stage5BlockHandsPlayed: number;
+  lastWrongDecision: "hit" | "stand" | null;
+  lastWrongDecisionTotal: number | null;
+  lastWrongDecisionSoft: boolean | null;
+  bustQuizData: BustQuizData | null;
+  bustQuizStep: QuizStep;
 }
 
 // 16 of 52 cards are 10-value (10, J, Q, K × 4 suits) — the foundational probability of Level 1
@@ -119,6 +126,11 @@ export function getInitialLevel1State(): Level1State {
     stage4HandsPlayed: 0,
     stage4IntroShown: false,
     stage5BlockHandsPlayed: 0,
+    lastWrongDecision: null,
+    lastWrongDecisionTotal: null,
+    lastWrongDecisionSoft: null,
+    bustQuizData: null,
+    bustQuizStep: 1,
   };
 }
 
@@ -159,25 +171,30 @@ export function startNewHand(state: Level1State): Level1State {
     firstActionDone: false,
     lastOutcome: null,
     lastDecisionCorrect: null,
+    lastWrongDecision: null,
+    lastWrongDecisionTotal: null,
+    lastWrongDecisionSoft: null,
+    bustQuizData: null,
+    bustQuizStep: 1,
   };
 }
 
 function recordDecision(
   state: Level1State,
   action: "hit" | "stand"
-): Pick<Level1State, "correctDecisions" | "totalDecisions" | "consecutiveCorrect" | "lastDecisionCorrect" | "firstActionDone"> {
-  const correct = action === getBasicStrategyActionLevel1(
-    calculateHandValue(state.playerHand),
-    isSoft(state.playerHand),
-    state.dealerHand[0],
-    state.playerHand
-  );
+): Pick<Level1State, "correctDecisions" | "totalDecisions" | "consecutiveCorrect" | "lastDecisionCorrect" | "firstActionDone" | "lastWrongDecision" | "lastWrongDecisionTotal" | "lastWrongDecisionSoft"> {
+  const total = calculateHandValue(state.playerHand);
+  const soft = isSoft(state.playerHand);
+  const correct = action === getBasicStrategyActionLevel1(total, soft, state.dealerHand[0], state.playerHand);
   return {
     correctDecisions: state.correctDecisions + (correct ? 1 : 0),
     totalDecisions: state.totalDecisions + 1,
     consecutiveCorrect: correct ? state.consecutiveCorrect + 1 : 0,
     lastDecisionCorrect: correct,
     firstActionDone: true,
+    lastWrongDecision: correct ? null : action,
+    lastWrongDecisionTotal: correct ? null : total,
+    lastWrongDecisionSoft: correct ? null : soft,
   };
 }
 

@@ -23,6 +23,14 @@ import {
   getStageIntroContext,
   isConsecutiveWin,
 } from "@/game/levels/level1/gameLogic";
+import {
+  computeBustQuizData,
+  evaluateStep1,
+  evaluateStep2,
+  getStage5QuizInitialContext,
+  getStage5QuizStep1EvalContext,
+  getStage5QuizStep2EvalContext,
+} from "@/game/levels/level1/quizLogic";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -61,6 +69,8 @@ function TutorSidebar({
   canHint,
   onHint,
   onStudentMessage,
+  showContinue,
+  onContinue,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -71,6 +81,8 @@ function TutorSidebar({
   canHint: boolean;
   onHint: () => void;
   onStudentMessage: (q: string) => void;
+  showContinue?: boolean;
+  onContinue?: () => void;
 }) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -133,7 +145,19 @@ function TutorSidebar({
         </div>
       ) : (
         <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", borderTop: "1px solid #374151" }}>
-          {canHint && (
+          {showContinue && (
+            <div style={{ padding: "0.75rem 1rem 0" }}>
+              <button
+                className="action-btn action-btn--deal"
+                onClick={onContinue}
+                disabled={loading}
+                style={{ width: "100%" }}
+              >
+                Continue
+              </button>
+            </div>
+          )}
+          {canHint && !showContinue && (
             <div style={{ padding: "0.75rem 1rem 0" }}>
               <button
                 className="action-btn"
@@ -148,7 +172,7 @@ function TutorSidebar({
           <div className="tutor-panel__input-row">
             <input
               className="tutor-panel__input"
-              placeholder="Ask a probability question…"
+              placeholder={showContinue ? "Ask a follow-up question…" : "Ask a probability question…"}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
@@ -180,6 +204,21 @@ function advanceAfterRound(s: Level1State): Level1State {
   }
   if (s.stage === 4) return { ...s, phase: "tutor-feedback" };
   if (s.stage === 5) {
+    // Wrong decision in Stage 5: interrupt with probability quiz
+    if (
+      s.lastDecisionCorrect === false &&
+      s.lastWrongDecision !== null &&
+      s.lastWrongDecisionTotal !== null &&
+      !(s.lastWrongDecision === "hit" && (s.lastWrongDecisionSoft ?? false))
+    ) {
+      const bustQuizData = computeBustQuizData(
+        s.lastWrongDecision,
+        s.lastWrongDecisionTotal,
+        s.lastWrongDecisionSoft ?? false,
+        s.dealerHand[0]?.rank ?? "?"
+      );
+      return { ...s, phase: "bust-quiz", bustQuizData, bustQuizStep: 1 };
+    }
     const blockHandsAfter = s.stage5BlockHandsPlayed + 1;
     if (blockHandsAfter >= STAGE5_BLOCK_SIZE) {
       return { ...s, phase: "tutor-feedback", stage5BlockHandsPlayed: blockHandsAfter };
@@ -219,7 +258,7 @@ export default function Level1Session({ level: _level }: { level: Level }) {
     fireTutor("explain", getStageIntroContext(1));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Subsequent tutor-intro and tutor-feedback phases (stages 3+)
+  // Subsequent tutor-intro, tutor-feedback, and bust-quiz phases (stages 3+)
   useEffect(() => {
     if (state.stage === 1) return;
     if (state.phase === "tutor-intro") {
@@ -227,6 +266,8 @@ export default function Level1Session({ level: _level }: { level: Level }) {
       else if (state.stage === 4 && !state.stage4IntroShown) fireTutor("explain", getStageIntroContext(4));
     } else if (state.phase === "tutor-feedback") {
       fireTutor("feedback", getLevel1GameContext(state));
+    } else if (state.phase === "bust-quiz" && state.bustQuizData) {
+      fireTutor("explain", getStage5QuizInitialContext(state.bustQuizData));
     }
   }, [state.stage, state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -269,6 +310,9 @@ export default function Level1Session({ level: _level }: { level: Level }) {
           return startNewHand({ ...s, consecutiveCorrect: 0, stage5BlockHandsPlayed: 0 });
         }
       }
+      if (s.phase === "bust-quiz") {
+        return startNewHand({ ...s, stage5BlockHandsPlayed: 0 });
+      }
       return s;
     });
   }, []);
@@ -292,7 +336,22 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   const handleStudentMessage = useCallback(
     async (question: string) => {
       setMessages((prev) => [...prev, { id: nextMsgId(), role: "student", text: question }]);
-      await fireTutor("explain", `Student question: "${question}"\n\n${getLevel1GameContext(state)}`);
+      if (state.phase === "bust-quiz" && state.bustQuizData) {
+        const step = state.bustQuizStep;
+        if (step === 1) {
+          const { correct, hint } = evaluateStep1(state.bustQuizData, question);
+          if (correct) setState((s) => ({ ...s, bustQuizStep: 2 as const }));
+          await fireTutor("explain", getStage5QuizStep1EvalContext(state.bustQuizData, question, correct, hint));
+        } else if (step === 2) {
+          const { correct, hint } = evaluateStep2(state.bustQuizData, question);
+          if (correct) setState((s) => ({ ...s, bustQuizStep: 3 as const }));
+          await fireTutor("explain", getStage5QuizStep2EvalContext(state.bustQuizData, question, correct, hint));
+        } else {
+          await fireTutor("explain", `Student follow-up after quiz: "${question}"\n\n${getLevel1GameContext(state)}`);
+        }
+      } else {
+        await fireTutor("explain", `Student question: "${question}"\n\n${getLevel1GameContext(state)}`);
+      }
     },
     [fireTutor, state]
   );
@@ -307,6 +366,7 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   const dealerTotal =
     dealerReveal && state.dealerHand.length > 0 ? calculateHandValue(state.dealerHand) : null;
   const isForcedPhase = state.phase === "tutor-intro" || state.phase === "tutor-feedback";
+  const showQuizContinue = state.phase === "bust-quiz" && state.bustQuizStep === 3;
   const actionsEnabled = state.phase === "player-turn";
   const showStreak = state.stage === 5;
   const tenPct = `${Math.round(TEN_VALUE_PROBABILITY * 100)}%`;
@@ -527,6 +587,8 @@ export default function Level1Session({ level: _level }: { level: Level }) {
         canHint={actionsEnabled}
         onHint={handleHint}
         onStudentMessage={handleStudentMessage}
+        showContinue={showQuizContinue}
+        onContinue={handleAcknowledge}
       />
     </div>
   );
