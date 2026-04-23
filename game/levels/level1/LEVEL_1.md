@@ -29,9 +29,10 @@ They should arrive at those answers through reasoning, not memorization.
 What the player should understand by the end of this level:
 
 1. **The 31% ten-value probability** — A standard deck has 16 cards worth 10 points (four 10s, four Jacks, four Queens, four Kings). That is 16/52 ≈ 31% — the single most important probability in blackjack.
-2. **Player bust risk as a function of hard total** — Given a hard total, the player can calculate the fraction of the deck that would cause a bust if they hit. This is derived directly from the 31% ten-value rate.
+2. **Full bust / improvement spectrum** — For any hard total, the player should enumerate ALL card ranks that would bust them AND all ranks that would improve them. A hard 16 has 8 bust ranks (6–K = 32 cards = 62%), and a hard 12 has 9 improving rank groups (A + 2–9 = 36 cards = 69%). Students learn to count the full set, not just the worst or best card.
 3. **How the 31% rate predicts the dealer's hole card** — When the dealer shows a weak upcard (2–6), their hidden card is most likely a 10-value (~31% prior), giving them roughly a 15 or 16. Since they must hit below 17, they then face a ~46–62% chance of busting on that hit.
 4. **Two-number decision framework** — Every hit/stand decision reduces to comparing two probabilities: (1) the player's bust risk if they hit, and (2) the dealer's probability of busting without the player's help.
+5. **Soft hand awareness** — A soft hand (one with a usable Ace) cannot bust on a single draw, but that alone does not mean hitting is always correct. A soft 19 should stand because only 4 out of 52 cards improve it to 21, and the hand is already strong.
 
 What this level explicitly does NOT cover:
 
@@ -72,53 +73,157 @@ Stage 3 — Probability Chain (tutor-intro)
 
 Stage 4 — Guided Hands (3 hands)
   Tutor gives a pre-play probability framework intro.
-  After each hand → tutor-feedback: tutor evaluates the decision using
-  the actual bust probabilities shown in the HUD.
+  After each hand → tutor-feedback: tutor evaluates ALL decisions using
+  the actual bust probabilities shown in the HUD, referencing the decision log.
   Player must read and click "Got it" before the next hand.
 
 Stage 5 — Free Play with Streak (blocks of 5 hands)
-  Player plays until they achieve 5 consecutive correct decisions.
-  After each 5-hand block → tutor-feedback summary.
+  Player plays until they achieve 5 consecutive correct first-action decisions.
+  ALL decisions per hand are tracked, not just the first.
+  After each block of 5 hands → tutor-feedback with a block summary
+    showing every hand's decisions and outcomes.
+  Incorrect first-action decisions interrupt immediately with a probability quiz.
   "Get Hint" and sidebar chat remain available throughout.
-  5 consecutive correct decisions → session complete.
+  5 consecutive correct first-action decisions → session complete.
 ```
+
+### Stage 5 — Probability Quiz Workflow
+
+When a player makes an incorrect **first-action** decision in Stage 5, the game immediately interrupts with a probability quiz instead of advancing to the next hand. The quiz is specific to the type of error:
+
+#### Wrong Hit on a Hard Hand (e.g., hitting hard 20)
+
+A 3-part quiz walks the student through computing the full probability space:
+
+```
+Part 1: "With a hard [total], how many different card ranks in a standard
+         deck would cause you to bust if you drew one more card?"
+         → Student enumerates ALL bust ranks (not just the highest)
+         → Evaluated by code; LLM confirms or redirects with a hint
+
+Part 2: "Each rank has 4 cards in a standard deck — so how many total
+         cards out of 52 would cause a bust?"
+         → Student multiplies (N bust ranks × 4)
+         → Evaluated by code
+
+Part 3: "How many of the remaining non-bust cards would actually improve
+         your total?" (comparing improve% vs bust%)
+         → Student reasons about the full distribution
+         → LLM gives final synthesis connecting bust%, improve%,
+           and the dealer's bust probability for this upcard
+```
+
+#### Wrong Stand on a Hard Hand (e.g., standing on hard 12 vs dealer 10)
+
+A 3-part quiz that teaches the improving-card spectrum:
+
+```
+Part 1: "With a hard [total], how many different card ranks in a standard
+         deck would improve your total without causing you to bust?"
+         → Student enumerates ALL improving ranks (e.g., A + 2–9 for hard 12)
+
+Part 2: "How many total cards out of 52 is that?"
+         → Student multiplies (N improving ranks × 4 per rank)
+
+Part 3: "The dealer busts only [X]% from a [rank] — given your [Y]%
+         chance of improving, what does the math say you should do?"
+         → Student reasons about hitting vs. standing given both numbers
+         → LLM gives final synthesis
+```
+
+Every quiz question includes the dealer upcard and dealer bust probability in its framing. The connection between player risk and dealer bust chance is always explicit.
+
+#### Wrong Hit on a Soft Hand (e.g., hitting soft 19)
+
+Soft hand errors use a dedicated 1-question quiz (soft hands cannot bust):
+
+```
+Question: "You have a soft [total]. On a soft hand the Ace can count as 1
+           if needed — so you cannot bust on one card. How many cards out
+           of 52 would actually improve you to a total of 21?"
+           → Student counts cards that complete exactly 21
+
+Synthesis: LLM confirms, then explains: "Only [X]% of the deck improves
+           you — you were already at [soft total], a strong hand. The
+           dealer busts just [Y]% from a [rank], so standing is correct."
+```
+
+After any quiz completes (all parts answered), the "Continue" button appears in the sidebar. Clicking it resets the block count and starts a new hand.
+
+### Quiz Answer Evaluation
+
+All quiz answers are evaluated by code (`evaluateStep1`, `evaluateStep2`, `evaluateSoftStep1`). The LLM is never asked to parse or judge a numerical answer — it only confirms, redirects with a provided hint, or synthesizes the final explanation. This prevents LLM arithmetic errors.
+
+### Block-Level Tutor Feedback
+
+When 5 hands complete without a wrong first-action decision, `tutor-feedback` fires with a `blockDecisionLog` summary. The log contains every hand's:
+- Starting hand and dealer upcard
+- Every hit/stand decision made (total, soft/hard, action, correct/incorrect)
+- Hand outcome (win/loss/push)
+
+The LLM receives this full summary and is instructed to reference specific hands by number — e.g., "on hand 3 you correctly stood on 16 against a 6 because the dealer had a 42% bust chance."
 
 ### Tutor Sidebar
 
 The tutor panel is always visible on the right side of the screen. It is never a fullscreen modal. This means:
 
-- During forced tutor phases (`tutor-intro`, `tutor-feedback`): the sidebar shows the tutor message and an acknowledge button ("Got it" / "Let's Play"). The Hit/Stand buttons on the game board are disabled, but the game board remains visible so the player can read the hand while absorbing the tutor's explanation.
-- During free play (`player-turn`, `round-over`): the sidebar shows a "Get Hint" button and a text input for the student to ask any probability question. Tutor responses accumulate as a scrolling conversation history.
+- During forced tutor phases (`tutor-intro`, `tutor-feedback`, `bust-quiz`): the sidebar shows the tutor message and either an acknowledge button ("Got it") or a quiz chat input.
+- During free play (`player-turn`, `round-over`): the sidebar shows a "Get Hint" button and a text input for the student to ask any probability question.
+
+During `bust-quiz` phase: the game board remains visible but Hit/Stand are disabled. The student types quiz answers into the sidebar chat input. The "Continue" button replaces the text input only after the quiz reaches its final completed step.
 
 ### Win / Progression Condition
 
-The player must make **5 consecutive correct hit/stand decisions** (correctness measured against Basic Strategy). Any incorrect decision resets `consecutiveCorrect` to 0. The session is complete when `consecutiveCorrect` reaches 5.
+The player must make **5 consecutive correct first-action decisions** (correctness measured against Basic Strategy). Any incorrect first action resets `consecutiveCorrect` to 0. Subsequent decisions within the same hand (second hit, etc.) do not affect the streak but are tracked, logged, and reviewed by the tutor.
 
-### State Shape (`Level1State`)
+---
+
+## State Shape (`Level1State`)
 
 ```ts
+export interface HandDecision {
+  action: "hit" | "stand";
+  total: number;          // Player total at moment of decision
+  soft: boolean;          // Was it a soft hand?
+  correct: boolean;       // Was it the Basic Strategy correct action?
+  dealerUpcard: string;   // Dealer rank at time of decision
+}
+
+export interface BlockHandSummary {
+  handNumber: number;
+  decisions: HandDecision[];
+  outcome: "win" | "loss" | "push" | null;
+  playerHandAtStart: string;  // Ranks of opening 2 cards
+  dealerUpcard: string;
+}
+
 export interface Level1State {
   stage: 1 | 2 | 3 | 4 | 5;
   phase:
-    | "tutor-intro"      // Tutor speaks in sidebar; player must acknowledge before acting
-    | "player-turn"      // Player chooses Hit or Stand; sidebar chat and hint available
+    | "tutor-intro"      // Tutor speaks; player must acknowledge before acting
+    | "player-turn"      // Player chooses Hit or Stand
     | "dealer-turn"      // Dealer plays out automatically
-    | "round-over"       // Outcome shown; stages 2 uses manual "Next Hand", 4–5 auto-advance
-    | "tutor-feedback"   // Tutor evaluates decision in sidebar; player must acknowledge
+    | "round-over"       // Outcome shown; stage 2 uses manual "Next Hand", 4–5 auto-advance
+    | "tutor-feedback"   // Tutor evaluates decisions; player must acknowledge
+    | "bust-quiz"        // Probability quiz interrupts after wrong first-action decision
     | "session-over";    // 5-in-a-row achieved; level complete
 
   shoe: DeckState;
   playerHand: Card[];
   dealerHand: Card[];       // [0] = upcard (visible); [1] = hole card (hidden until dealer-turn)
 
-  // Decision tracking
+  // Decision tracking — ALL decisions per hand
+  handDecisions: HandDecision[];          // Every hit/stand taken in the current hand
+  decisionHandAtAction: Card[] | null;    // Player hand at moment of FIRST action (pre-draw snapshot)
+  decisionDealerUpcard: Card | null;      // Dealer upcard at moment of first action
+
+  // Session counters (only first action per hand affects these)
   correctDecisions: number;
   totalDecisions: number;
-  consecutiveCorrect: number;       // Resets to 0 on any incorrect decision
-  lastDecisionCorrect: boolean | null;
+  consecutiveCorrect: number;             // Resets to 0 on incorrect first action
+  lastDecisionCorrect: boolean | null;    // Result of first action in current hand
   sessionComplete: boolean;
   lastOutcome: "win" | "loss" | "push" | null;
-  firstActionDone: boolean;
 
   // Session stats
   sessionWins: number;
@@ -133,6 +238,26 @@ export interface Level1State {
   stage4HandsPlayed: number;
   stage4IntroShown: boolean;
   stage5BlockHandsPlayed: number;
+
+  // Block summary for tutor-feedback after 5-hand blocks
+  blockDecisionLog: BlockHandSummary[];
+
+  // Wrong-decision quiz state (hard hands)
+  lastWrongDecision: "hit" | "stand" | null;
+  lastWrongDecisionTotal: number | null;
+  lastWrongDecisionSoft: boolean | null;
+  bustQuizData: BustQuizData | null;
+  bustQuizStep: 1 | 2 | 3 | 4;          // 4 = quiz complete; Continue button shown
+}
+```
+
+Soft hand quiz state (`SoftQuizState`) is managed in `Level1Session.tsx` component state (not in `Level1State`) since it does not affect game logic, only the tutor sidebar flow:
+
+```ts
+interface SoftQuizState {
+  active: true;
+  data: SoftHandQuizData;
+  step: 1 | 2;   // 2 = synthesis delivered; Continue button shown
 }
 ```
 
@@ -142,7 +267,7 @@ export interface Level1State {
 
 ### Core Teaching Concept
 
-There is one foundational probability in this level: **16/52 ≈ 31% of cards in a fresh deck are worth 10 points** (10, J, Q, K — four of each across four suits). Every other probability calculation in this level flows from that number.
+There is one foundational probability in this level: **16/52 ≈ 31% of cards in a fresh deck are worth 10 points** (10, J, Q, K — four of each across four suits). Every other probability calculation flows from that number.
 
 The level never adjusts probabilities based on cards dealt (no counting). This is intentional — the goal is to internalize the fresh-deck baseline before introducing shoe-composition effects in later levels.
 
@@ -150,148 +275,157 @@ The level never adjusts probabilities based on cards dealt (no counting). This i
 
 #### `TEN_VALUE_PROBABILITY`
 
-- **Purpose:** The constant 31% displayed in the HUD throughout the entire level. Acts as a persistent anchor that the player learns to reference.
 - **Value:** `16 / 52`
-- **Note:** This is exported as a named constant, not a function. The UI always displays it as "31%" regardless of game state.
+- **Note:** Exported as a named constant. Displayed as "31%" in the HUD throughout the entire level.
 
 #### `getPlayerBustProbability(hand)`
 
-- **Purpose:** Answers "If I hit right now, what fraction of cards in a fresh deck would cause me to bust?" Shown in the HUD as "Bust If Hit" during `player-turn` phase.
-- **Inputs:** `hand: Card[]`
-- **Output:** `number` between 0–1, or `null` if hand is empty
+- **Purpose:** "If I hit right now, what fraction of a fresh deck busts me?" Shown as "Bust If Hit" in the HUD.
+- **Output:** `number` 0–1, or `null` if hand is empty
 - **Algorithm:**
   ```
   If hand is empty: return null
-  If hand is soft (has a usable ace): return 0
-    — An ace can always absorb one additional card as value 1, so no single
-      card can bust a soft hand. This is a direct consequence of the 31% rule.
-  
-  Compute hard total = calculateHandValue(hand)
-  If total <= 11: return 0   (no card can bust you)
-  If total > 21:  return 1   (already busted)
-  
-  Return PLAYER_BUST_PROB[total] using this lookup table:
-    Hard 12 → 16/52  (only 10-value cards bust you; ~31%)
-    Hard 13 → 20/52  (9 through K bust you; ~38%)
-    Hard 14 → 24/52  (8 through K; ~46%)
-    Hard 15 → 28/52  (7 through K; ~54%)
-    Hard 16 → 32/52  (6 through K; ~62%)
-    Hard 17 → 36/52  (5 through K; ~69%)
-    Hard 18 → 40/52  (4 through K; ~77%)
-    Hard 19 → 44/52  (3 through K; ~85%)
-    Hard 20 → 48/52  (2 through K; ~92% — note: Ace to 20 = 21, NOT a bust)
-    Hard 21 → 52/52  (every card busts you; 100%)
+  If hand is soft: return 0   (Ace absorbs any single card)
+  If total <= 11:  return 0   (no single card can bust)
+  If total > 21:   return 1   (already busted)
+  Return PLAYER_BUST_PROB[total]:
+    Hard 12 → 16/52  (~31%)   bust ranks: 10, J, Q, K
+    Hard 13 → 20/52  (~38%)   bust ranks: 9–K
+    Hard 14 → 24/52  (~46%)   bust ranks: 8–K
+    Hard 15 → 28/52  (~54%)   bust ranks: 7–K
+    Hard 16 → 32/52  (~62%)   bust ranks: 6–K
+    Hard 17 → 36/52  (~69%)   bust ranks: 5–K
+    Hard 18 → 40/52  (~77%)   bust ranks: 4–K
+    Hard 19 → 44/52  (~85%)   bust ranks: 3–K
+    Hard 20 → 48/52  (~92%)   bust ranks: 2–K (Ace as 1 = 21, not bust)
+    Hard 21 → 52/52  (100%)   all cards bust
   ```
-- **Edge cases:** Soft totals always return 0. After each Hit, recalculate with the updated hand. On bust, clear `playerBustProbability` to null (already busted, no further hit decisions).
+- **Teaching note:** The quiz explicitly asks students to enumerate these bust rank sets, not just recall the percentage. For hard 16, the answer is 8 bust ranks (6, 7, 8, 9, 10, J, Q, K) × 4 suits = 32 cards.
 
 #### `getDealerBustProbability(upcard)`
 
-- **Purpose:** Answers "If the dealer plays out by the rules, what fraction of the time do they bust?" Shown in the HUD as "Dealer Bust" during `player-turn` phase.
-- **Inputs:** `upcard: Card | undefined`
-- **Output:** `number` between 0–1, or `null` if no upcard
-- **Algorithm:**
+- **Purpose:** "How often does the dealer bust playing from this upcard?" Shown as "Dealer Bust" in the HUD.
+- **Algorithm:** Fixed lookup table (6-deck, dealer hits soft 17):
   ```
-  Fixed lookup table (6-deck, dealer hits soft 17 — derived from simulation):
-    "2" → 0.353,  "3" → 0.376,  "4" → 0.403,  "5" → 0.429,  "6" → 0.423,
-    "7" → 0.262,  "8" → 0.244,  "9" → 0.230,
-    "10", "J", "Q", "K" → 0.214,
-    "A" → 0.117
-  ```
-- **Edge cases:** Return `null` if upcard is undefined. Map J, Q, K to the "10" entry.
-- **Teaching connection:** The 31% ten-value rate explains why 2–6 are "weak" — the dealer's hidden card is likely a 10-value, leaving them with 12–16. They must hit, and there's a high probability the next card causes a bust.
-
-#### `getBasicStrategyActionLevel1(playerTotal, soft, dealerUpcard, playerHand)`
-
-- **Purpose:** Returns the correct decision for evaluating whether the player's choice was right. Not shown directly to the player — used only to determine `lastDecisionCorrect`.
-- **Inputs:** `playerTotal: number, soft: boolean, dealerUpcard: Card, playerHand: Card[]`
-- **Output:** `"hit" | "stand"`
-- **Algorithm:**
-  ```
-  Delegate to shared getBasicStrategyAction(playerHand, dealerUpcard).
-  Map non-hit/stand codes: "D"/"Ds" → "hit", pair codes → hard total evaluation.
+  "2" → 0.353,  "3" → 0.376,  "4" → 0.403,  "5" → 0.429,  "6" → 0.423,
+  "7" → 0.262,  "8" → 0.244,  "9" → 0.230,
+  "10", "J", "Q", "K" → 0.214,
+  "A" → 0.117
   ```
 
-### How Probability Results Surface in the UI
+#### `computeBustQuizData(playerAction, handTotal, isSoftHand, dealerUpcardRank)`
 
-All three probability stats are displayed in the **top-left HUD** during `player-turn` phase:
+Returns a `BustQuizData` object with all values pre-computed for the quiz:
+
+```ts
+interface BustQuizData {
+  playerAction: "hit" | "stand";
+  handTotal: number;
+  isSoftHand: boolean;
+  dealerUpcardRank: string;
+  dealerBustProbability: number;
+  // For wrong hit: cards that bust
+  bustCardRanks: string[];
+  bustCardCount: number;
+  bustProbability: number;
+  // For all hands: ALL cards that improve without busting
+  allImprovingRanks: string[];    // Deduplicated rank groups (e.g., "10/J/Q/K" counted once)
+  allImprovingCount: number;      // Total cards that improve (proper 52-card count)
+  improveProbability: number;
+  // For wrong stand: highest reachable total (used in synthesis)
+  bestImprovementCards: string[];
+  bestImprovementTotal: number;
+  bestImprovementCount: number;
+  bestImprovementProbability: number;
+}
+```
+
+All LLM quiz contexts receive pre-computed numbers from this object. The LLM is never asked to calculate probabilities itself.
+
+#### `computeSoftHandQuizData(handTotal, dealerUpcardRank)`
+
+Computes cards that reach 20 or 21 from a given soft total, for use in the soft-hand quiz path.
+
+---
+
+## Decision Snapshot
+
+To prevent the LLM from seeing confusing post-bust state, the game snapshots the player's hand at the moment of the first action into `decisionHandAtAction`. `getLevel1GameContext()` always reports `Player hand at decision:` using this snapshot — never the final busted hand.
+
+Example: Player has hard 15, hits correctly, draws a 10 → busts at 25. The tutor receives "Player hand at decision: 8, 7 (total: 15, hard)" not "total: 25."
+
+---
+
+## `getLevel1GameContext(state)` — LLM Context Format
 
 ```
-Stage | P(Ten-Value) 31% | Bust If Hit: X% | Dealer Bust: X%
+Level 1 — Probability & Blackjack
+Key probability: ~31% chance any card drawn is a 10-value (10, J, Q, K — 16 out of 52 cards)
+Player hand at decision: 8, 7 (total: 15, hard)
+Player bust probability if hitting from that total: 54%
+Dealer upcard: 6 (dealer bust probability: 42%)
+Phase: tutor-feedback
+Last first-action decision: INCORRECT
+All decisions this hand correct: no
+Streak: 2 consecutive correct (need 5 to pass)
+Session: 4/7 correct decisions
+
+Decisions this hand:
+  1. HIT on hard 15 vs dealer 6 — INCORRECT
+  2. HIT on hard 19 vs dealer 6 — INCORRECT
+
+Block summary (last 5 hands):          ← only present when phase is tutor-feedback
+  Hand 1 (started: 10, 6 vs dealer 5, outcome: win):
+    Decision 1: STAND on hard 16 vs dealer 5 — CORRECT
+  Hand 2 (started: A, 7 vs dealer 10, outcome: loss):
+    Natural blackjack — no decision needed.
+  ...
 ```
-
-- **P(Ten-Value)** — Always shown at 31%, every stage, every phase. Its persistence is intentional: the player should internalize it as a constant before using it in calculations.
-- **Bust If Hit** — Shown in red when ≥50% (high risk), green when <50% (lower risk). Only visible during `player-turn` when a hand is active.
-- **Dealer Bust** — Always green (it's a probability in the player's favor). Only visible during `player-turn`.
-
-The tutor sidebar's feedback always references these numbers by name, connecting the HUD values to the reasoning. The tutor never says "you should have stood" without citing the probability that explains why.
 
 ---
 
 ## Tutor Prompts
 
-### `feedback` prompt (what goes in `tutorPrompts.ts`)
+### `feedback` prompt
 
 ```
 Role: Patient blackjack probability tutor for a beginner.
-Scope: Evaluating hit/stand decisions through probability reasoning only.
-       Reference player bust probability if hitting, dealer bust probability,
-       and the 31% ten-value rate from the game context.
-Format: 3–4 sentences, plain text, warm tone.
-        Start with correct/incorrect verdict. Cite specific probabilities.
-        Close with one probability-based principle.
-Constraint: No card counting, no running/true count, no Double Down,
-            no Split, no bet sizing. No next-hand spoilers.
+Scope: Evaluating hit/stand decisions shown in "Decisions this hand" and "Block summary".
+       Use the "Player hand at decision" field — NOT the final hand total — to describe
+       what the player saw when they chose. Never comment on bust totals as if they
+       were decisions.
+Format: 3–4 sentences, plain text. Start with correct/incorrect verdict on the first
+        action. Reference specific decisions by number if multiple were made. Cite
+        bust probability, improve probability, and dealer bust probability. Close
+        with one probability-based principle.
+Constraint: No card counting, no running/true count, no Double Down, no Split,
+            no bet sizing. No next-hand spoilers.
 ```
 
 ### `hint` prompt
 
 ```
 Role: Blackjack probability tutor during active player decision.
-Scope: Guide player toward the two key probabilities: their own bust risk
-       and the dealer's bust probability. Never state the correct action.
-Format: 1–2 sentences, Socratic — ask a guiding question using the numbers
-        shown in the HUD.
+Scope: Guide player toward the two key HUD numbers: their bust risk if they hit
+       and the dealer's bust probability. If bust risk >= 50%, lead with that number.
+       If dealer bust >= 35%, note the player can afford to be patient.
+Format: 1–2 sentences, Socratic — ask a guiding question. Never state the correct action.
 Constraint: No card counting, no running/true count, no Double Down, no Split,
-            no bet sizing. Do not state the correct action directly.
+            no bet sizing.
 ```
 
-### `explanation` prompt (handles both stage intros and student chat questions)
+### `explanation` prompt
 
 ```
-Role: Blackjack probability tutor introducing concepts or answering questions.
-Scope: Always centers on probability — especially the 31% ten-value rate.
-       Handles both pre-hand stage introductions and free-form student questions.
-Format: 2–4 sentences, plain text. For student questions: answer the question
-        directly, then connect it to probability.
-Constraint: No card counting, no running/true count, no Double Down,
-            no Split, no bet sizing.
-```
-
-### What game state must be included in every LLM call
-
-`getLevel1GameContext(state)` must return:
-
-- Level number and pedagogical framing ("Level 1 — Probability & Blackjack")
-- The 31% constant as context ("~31% chance any card drawn is a 10-value")
-- Player hand (ranks + total + soft/hard label)
-- Player bust probability if hitting (as a percentage)
-- Dealer upcard (rank + dealer bust probability as a percentage)
-- Current phase
-- Last decision result (CORRECT / INCORRECT / none yet)
-- Consecutive correct streak (N / WIN_STREAK)
-- Session accuracy (correct / total)
-
-Example output:
-```
-Level 1 — Probability & Blackjack
-Key probability: ~31% chance any card drawn is a 10-value (10, J, Q, K — 16 out of 52 cards)
-Player hand: 8, 7 (total: 15, hard)
-Player bust probability if hitting: 54%
-Dealer upcard: 6 (dealer bust probability: 42%)
-Phase: tutor-feedback
-Last decision: INCORRECT
-Streak: 2 consecutive correct (need 5 to pass)
-Session: 4/7 correct decisions
+Role: Blackjack probability tutor for stage intros, student questions, and quiz tasks.
+Scope: Always ground responses in probability — especially the 31% ten-value rate.
+       When discussing bust ranks, enumerate ALL ranks that bust (not just the highest).
+       When discussing improving cards, enumerate ALL ranks that improve (not just the best).
+       Connect player probability to dealer bust probability explicitly.
+Format: 2–4 sentences, plain text. For quiz tasks: ask first, wait for response, then
+        confirm/correct and walk through the full calculation.
+Constraint: No card counting, no running/true count, no Double Down, no Split,
+            no bet sizing. Assume fresh 52-card deck; note denominator shrinks in practice.
 ```
 
 ---
@@ -301,13 +435,13 @@ Session: 4/7 correct decisions
 | Utility | Import path | Used for |
 |---|---|---|
 | `calculateHandValue` | `@/game/cardUtils` | Player and dealer totals |
-| `isSoft` | `@/game/cardUtils` | Detecting soft hands (bust probability = 0 when soft) |
+| `isSoft` | `@/game/cardUtils` | Detecting soft hands |
 | `isBust` | `@/game/cardUtils` | Detecting bust after hit |
 | `getBasicStrategyAction` | `@/game/basicStrategy` | Evaluating decision correctness |
 | `initShoe` | `@/game/deckState` | Initializing 6-deck shoe |
 | `dealCard` | `@/game/deckState` | Dealing cards |
 
-`getProbabilities` from `@/game/deckState` is NOT used — Level 1 intentionally uses fresh-deck composition lookup tables to teach the baseline probability before introducing shoe-state-aware math in later levels.
+`getProbabilities` from `@/game/deckState` is NOT used — Level 1 intentionally uses fresh-deck lookup tables to teach the baseline before shoe-state-aware math appears in later levels.
 
 ---
 
@@ -323,46 +457,56 @@ The tutor and game logic for this level must never:
 - [x] Reference content from Level 2 or higher
 - [x] Reveal the correct action before the player has decided
 - [x] Send player PII to the LLM
-- [x] Allow the player to skip tutor interactions (intro or feedback)
+- [x] Allow the player to skip tutor interactions (intro, feedback, or quiz)
+- [x] Ask the LLM to evaluate numerical answers — code evaluates all quiz answers
 
 ---
 
 ## Implementation Checklist
 
 ### `gameLogic.ts`
-- [x] `Level1State` interface defined with all fields including `playerBustProbability` and `stage`
-- [x] `TEN_VALUE_PROBABILITY` exported as a named constant (`16 / 52`)
-- [x] `getPlayerBustProbability(hand)` implemented — returns 0 for soft hands, lookup for hard totals, null when empty
-- [x] `getDealerBustProbability(upcard)` implemented using lookup table
-- [x] `getBasicStrategyActionLevel1(...)` implemented (maps Double→Hit, handles pair codes)
-- [x] `isConsecutiveWin(consecutiveCorrect)` implemented
-- [x] `getLevel1GameContext(state)` includes both bust probabilities and the 31% anchor
-- [x] `getStageIntroContext(stage)` returns probability-focused prompts for stages 1, 3, 4
-- [x] `playerBustProbability` recalculated on `startNewHand` and each `applyPlayerHit`
+- [x] `HandDecision` and `BlockHandSummary` interfaces defined
+- [x] `Level1State` uses `handDecisions: HandDecision[]` (replaces `firstActionDone` bool)
+- [x] `decisionHandAtAction` and `decisionDealerUpcard` snapshot on first action
+- [x] `blockDecisionLog: BlockHandSummary[]` accumulates across 5-hand blocks
+- [x] `recordDecision()` appends to `handDecisions` for every hit/stand
+- [x] Streak counters (`correctDecisions`, `totalDecisions`, `consecutiveCorrect`) only updated on first action per hand
+- [x] `getLevel1GameContext()` uses `decisionHandAtAction` snapshot; never reports bust total as decision state
+- [x] `getLevel1GameContext()` includes `Decisions this hand` log and `Block summary` when relevant
+- [x] `appendBlockHandSummary()` exported for use in `advanceAfterRound`
 - [x] All functions are pure — no DOM, no React imports, no side effects
 
+### `quizLogic.ts`
+- [x] `BustQuizData` includes `allImprovingRanks`, `allImprovingCount`, `improveProbability`
+- [x] `computeBustQuizData()` computes full bust spectrum AND full improvement spectrum
+- [x] `SoftHandQuizData` interface and `computeSoftHandQuizData()` implemented
+- [x] `QuizStep` type covers `1 | 2 | 3 | 4` (step 4 = complete)
+- [x] `evaluateStep1()` for wrong hit asks about bust rank count; for wrong stand asks about improving rank count
+- [x] `evaluateStep2()` asks about total bust cards (hit) or total improving cards (stand)
+- [x] `evaluateSoftStep1()` for soft hand hit asks about cards reaching 21
+- [x] Dealer bust probability included in every quiz initial context and step 3 synthesis
+- [x] LLM context builders (`getStage5Quiz*Context`, `getSoftHandQuiz*Context`) supply all numbers; LLM does no arithmetic
+
 ### `tutorPrompts.ts`
-- [x] `feedback` prompt centers on citing bust probabilities
-- [x] `hint` prompt uses Socratic questioning with HUD numbers
-- [x] `explanation` prompt handles both stage intros and student chat questions
+- [x] `feedback` prompt instructs LLM to use `Player hand at decision` field, not final total
+- [x] `feedback` prompt instructs LLM to reference block summary by hand number
+- [x] `hint` prompt leads with bust% when >= 50%; notes patient play when dealer bust >= 35%
+- [x] `explanation` prompt instructs enumerating ALL bust/improving ranks, connecting both probabilities
 - [x] All prompts exclude card counting, bet sizing, Double Down, Split
 
-### `index.ts`
-- [x] Title: "Probability Basics"
-- [x] Description reflects probability framing
-- [x] `passCriteria` updated
-- [x] `LevelModule` satisfies `lib/levelInterface.ts` contract
-
 ### `Level1Session.tsx`
-- [x] `TutorOverlay` (fullscreen modal) removed; replaced with persistent `TutorSidebar`
-- [x] Tutor sidebar always visible; never blocks the game board
-- [x] During forced phases (`tutor-intro`, `tutor-feedback`): acknowledge button visible in sidebar; Hit/Stand disabled on game board
-- [x] During `player-turn`: "Get Hint" button and chat input available in sidebar
-- [x] Chat input allows student to ask free-form probability questions; responses add to message history
+- [x] `SoftQuizState` managed as component state (not in `Level1State`)
+- [x] `advanceAfterRound()` checks for soft-hand wrong hit first, then hard wrong decision
+- [x] Soft quiz triggers `setSoftQuiz({ active: true, data, step: 1 })` and sets `phase: "bust-quiz"`
+- [x] `handleStudentMessage()` routes to soft quiz path or hard quiz path based on `softQuiz?.active`
+- [x] Hard quiz handles steps 1, 2, 3 (advances step on correct answer); step 4 = complete
+- [x] `showQuizContinue` = `bustQuizStep === 4` OR `(softQuiz?.active && softQuiz.step === 2)`
+- [x] `handleAcknowledge()` clears `softQuiz` and resets block log on quiz continue
+- [x] Decision badge reflects all decisions: "All N decisions correct" or "Incorrect decision (see tutor)"
+- [x] Tutor sidebar visible at all times; never blocks game board
 - [x] HUD shows P(Ten-Value) always; Bust If Hit + Dealer Bust during `player-turn`
-- [x] Bust If Hit displayed in red when ≥50%, green when <50%
+- [x] Bust If Hit displayed in red when >= 50%, green when < 50%
 - [x] Streak indicator visible in Stage 5
-- [x] Session-over screen references probability framing
 - [x] LLM errors display "Tutor unavailable. Try again." without crashing
 
 ### Manual QA
@@ -373,8 +517,14 @@ The tutor and game logic for this level must never:
 - [ ] Bust If Hit updates correctly after each Hit action
 - [ ] Dealer Bust shows correct percentage per upcard
 - [ ] Tutor feedback references the actual bust probabilities, not generic advice
+- [ ] Feedback in Stage 5 references the block summary with specific hand numbers
 - [ ] Chat input accepts a question and returns a probability-focused response
-- [ ] Streak resets on incorrect decision
-- [ ] Session completes at exactly 5 consecutive correct decisions
+- [ ] Streak resets on incorrect first-action decision
+- [ ] Multi-hit hand: subsequent decisions tracked in log; tutor can reference them
+- [ ] Wrong hit on hard hand triggers 3-part quiz; Part 3 synthesis mentions both bust% and dealer%
+- [ ] Wrong stand on hard hand triggers 3-part quiz about improving cards + dealer probability
+- [ ] Wrong hit on soft hand triggers soft-hand quiz asking about cards reaching 21
+- [ ] Quiz Continue button appears only after final quiz step is answered correctly
+- [ ] Session completes at exactly 5 consecutive correct first-action decisions
 - [ ] No API key visible in network tab or source
 - [ ] Works on latest Chrome and Safari

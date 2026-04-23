@@ -20,6 +20,22 @@ export const STAGE4_HAND_COUNT = 3;
 export const STAGE5_BLOCK_SIZE = 5;
 export const WIN_STREAK = 5;
 
+export interface HandDecision {
+  action: "hit" | "stand";
+  total: number;
+  soft: boolean;
+  correct: boolean;
+  dealerUpcard: string;
+}
+
+export interface BlockHandSummary {
+  handNumber: number;
+  decisions: HandDecision[];
+  outcome: "win" | "loss" | "push" | null;
+  playerHandAtStart: string;
+  dealerUpcard: string;
+}
+
 export interface Level1State {
   stage: Level1Stage;
   phase: Level1Phase;
@@ -32,7 +48,11 @@ export interface Level1State {
   lastDecisionCorrect: boolean | null;
   sessionComplete: boolean;
   lastOutcome: "win" | "loss" | "push" | null;
-  firstActionDone: boolean;
+  // Per-hand decision tracking
+  handDecisions: HandDecision[];
+  // Snapshot of player hand at first decision moment (pre-draw)
+  decisionHandAtAction: Card[] | null;
+  decisionDealerUpcard: Card | null;
   sessionWins: number;
   sessionLosses: number;
   dealerBustProbability: number | null;
@@ -41,6 +61,7 @@ export interface Level1State {
   stage4HandsPlayed: number;
   stage4IntroShown: boolean;
   stage5BlockHandsPlayed: number;
+  blockDecisionLog: BlockHandSummary[];
   lastWrongDecision: "hit" | "stand" | null;
   lastWrongDecisionTotal: number | null;
   lastWrongDecisionSoft: boolean | null;
@@ -117,7 +138,9 @@ export function getInitialLevel1State(): Level1State {
     lastDecisionCorrect: null,
     sessionComplete: false,
     lastOutcome: null,
-    firstActionDone: false,
+    handDecisions: [],
+    decisionHandAtAction: null,
+    decisionDealerUpcard: null,
     sessionWins: 0,
     sessionLosses: 0,
     dealerBustProbability: null,
@@ -126,6 +149,7 @@ export function getInitialLevel1State(): Level1State {
     stage4HandsPlayed: 0,
     stage4IntroShown: false,
     stage5BlockHandsPlayed: 0,
+    blockDecisionLog: [],
     lastWrongDecision: null,
     lastWrongDecisionTotal: null,
     lastWrongDecisionSoft: null,
@@ -154,10 +178,17 @@ export function startNewHand(state: Level1State): Level1State {
       phase: "round-over",
       dealerBustProbability: getDealerBustProbability(d1),
       playerBustProbability: null,
-      firstActionDone: false,
+      handDecisions: [],
+      decisionHandAtAction: null,
+      decisionDealerUpcard: null,
       lastOutcome: "win",
       lastDecisionCorrect: null,
       sessionWins: state.sessionWins + 1,
+      lastWrongDecision: null,
+      lastWrongDecisionTotal: null,
+      lastWrongDecisionSoft: null,
+      bustQuizData: null,
+      bustQuizStep: 1,
     };
   }
   return {
@@ -168,7 +199,9 @@ export function startNewHand(state: Level1State): Level1State {
     phase: "player-turn",
     dealerBustProbability: getDealerBustProbability(d1),
     playerBustProbability: getPlayerBustProbability(playerHand),
-    firstActionDone: false,
+    handDecisions: [],
+    decisionHandAtAction: null,
+    decisionDealerUpcard: null,
     lastOutcome: null,
     lastDecisionCorrect: null,
     lastWrongDecision: null,
@@ -182,19 +215,38 @@ export function startNewHand(state: Level1State): Level1State {
 function recordDecision(
   state: Level1State,
   action: "hit" | "stand"
-): Pick<Level1State, "correctDecisions" | "totalDecisions" | "consecutiveCorrect" | "lastDecisionCorrect" | "firstActionDone" | "lastWrongDecision" | "lastWrongDecisionTotal" | "lastWrongDecisionSoft"> {
+): Pick<Level1State,
+  | "correctDecisions" | "totalDecisions" | "consecutiveCorrect"
+  | "lastDecisionCorrect" | "handDecisions"
+  | "decisionHandAtAction" | "decisionDealerUpcard"
+  | "lastWrongDecision" | "lastWrongDecisionTotal" | "lastWrongDecisionSoft"
+> {
   const total = calculateHandValue(state.playerHand);
   const soft = isSoft(state.playerHand);
-  const correct = action === getBasicStrategyActionLevel1(total, soft, state.dealerHand[0], state.playerHand);
+  const dealerUpcard = state.dealerHand[0];
+  const correct = action === getBasicStrategyActionLevel1(total, soft, dealerUpcard, state.playerHand);
+  const decision: HandDecision = {
+    action,
+    total,
+    soft,
+    correct,
+    dealerUpcard: dealerUpcard?.rank ?? "?",
+  };
+  const isFirstAction = state.handDecisions.length === 0;
+
   return {
-    correctDecisions: state.correctDecisions + (correct ? 1 : 0),
-    totalDecisions: state.totalDecisions + 1,
-    consecutiveCorrect: correct ? state.consecutiveCorrect + 1 : 0,
-    lastDecisionCorrect: correct,
-    firstActionDone: true,
-    lastWrongDecision: correct ? null : action,
-    lastWrongDecisionTotal: correct ? null : total,
-    lastWrongDecisionSoft: correct ? null : soft,
+    // Only count and update streak for first decision per hand
+    correctDecisions: isFirstAction ? state.correctDecisions + (correct ? 1 : 0) : state.correctDecisions,
+    totalDecisions: isFirstAction ? state.totalDecisions + 1 : state.totalDecisions,
+    consecutiveCorrect: isFirstAction ? (correct ? state.consecutiveCorrect + 1 : 0) : state.consecutiveCorrect,
+    lastDecisionCorrect: isFirstAction ? correct : state.lastDecisionCorrect,
+    handDecisions: [...state.handDecisions, decision],
+    // Snapshot the hand state at the moment of first action only
+    decisionHandAtAction: isFirstAction ? [...state.playerHand] : state.decisionHandAtAction,
+    decisionDealerUpcard: isFirstAction ? dealerUpcard ?? null : state.decisionDealerUpcard,
+    lastWrongDecision: isFirstAction && !correct ? action : state.lastWrongDecision,
+    lastWrongDecisionTotal: isFirstAction && !correct ? total : state.lastWrongDecisionTotal,
+    lastWrongDecisionSoft: isFirstAction && !correct ? soft : state.lastWrongDecisionSoft,
   };
 }
 
@@ -206,7 +258,7 @@ export function applyPlayerHit(state: Level1State): Level1State {
   const busted = isBust(playerHand);
   const got21 = !busted && calculateHandValue(playerHand) === 21;
 
-  const decisionUpdates = state.firstActionDone ? {} : recordDecision(state, "hit");
+  const decisionUpdates = recordDecision(state, "hit");
 
   return {
     ...state,
@@ -222,7 +274,7 @@ export function applyPlayerHit(state: Level1State): Level1State {
 }
 
 export function applyPlayerStand(state: Level1State): Level1State {
-  const decisionUpdates = state.firstActionDone ? {} : recordDecision(state, "stand");
+  const decisionUpdates = recordDecision(state, "stand");
   return {
     ...state,
     ...decisionUpdates,
@@ -262,27 +314,85 @@ export function runDealerPlay(state: Level1State): Level1State {
   };
 }
 
+function formatDecisionsForContext(decisions: HandDecision[]): string {
+  if (decisions.length === 0) return "  No decisions recorded.";
+  return decisions.map((d, i) => {
+    const typeLabel = d.soft ? "soft" : "hard";
+    const correctLabel = d.correct ? "CORRECT" : "INCORRECT";
+    return `  ${i + 1}. ${d.action.toUpperCase()} on ${typeLabel} ${d.total} vs dealer ${d.dealerUpcard} — ${correctLabel}`;
+  }).join("\n");
+}
+
+export function appendBlockHandSummary(
+  state: Level1State,
+  handNumber: number
+): BlockHandSummary[] {
+  const summary: BlockHandSummary = {
+    handNumber,
+    decisions: [...state.handDecisions],
+    outcome: state.lastOutcome,
+    playerHandAtStart: state.decisionHandAtAction
+      ? state.decisionHandAtAction.map(c => c.rank).join(", ")
+      : state.playerHand.slice(0, 2).map(c => c.rank).join(", "),
+    dealerUpcard: state.dealerHand[0]?.rank ?? "?",
+  };
+  return [...state.blockDecisionLog, summary];
+}
+
+function formatBlockLog(log: BlockHandSummary[]): string {
+  if (log.length === 0) return "No hands completed in this block.";
+  return log.map((h) => {
+    const decisionStr = h.decisions.length === 0
+      ? "    Natural blackjack — no decision needed."
+      : h.decisions.map((d, i) => {
+          const typeLabel = d.soft ? "soft" : "hard";
+          const correctLabel = d.correct ? "CORRECT" : "INCORRECT";
+          return `    Decision ${i + 1}: ${d.action.toUpperCase()} on ${typeLabel} ${d.total} vs dealer ${d.dealerUpcard} — ${correctLabel}`;
+        }).join("\n");
+    const outcomeStr = h.outcome ?? "unknown";
+    return `  Hand ${h.handNumber} (started: ${h.playerHandAtStart} vs dealer ${h.dealerUpcard}, outcome: ${outcomeStr}):\n${decisionStr}`;
+  }).join("\n");
+}
+
 export function getLevel1GameContext(state: Level1State): string {
-  const playerTotal = state.playerHand.length > 0 ? calculateHandValue(state.playerHand) : null;
-  const soft = state.playerHand.length > 0 ? isSoft(state.playerHand) : false;
-  const dealerBustPct = state.dealerBustProbability !== null
-    ? `${Math.round(state.dealerBustProbability * 100)}%`
+  // Use the snapshotted hand at decision time so the LLM never sees a bust total
+  const displayHand = state.decisionHandAtAction ?? state.playerHand;
+  const playerTotal = displayHand.length > 0 ? calculateHandValue(displayHand) : null;
+  const soft = displayHand.length > 0 ? isSoft(displayHand) : false;
+
+  const dealerUpcardForContext = state.decisionDealerUpcard ?? state.dealerHand[0];
+  const dealerBustPct = dealerUpcardForContext
+    ? `${Math.round((DEALER_BUST_PROB[dealerUpcardForContext.rank] ?? 0) * 100)}%`
     : "unknown";
-  const playerBustPct = state.playerBustProbability !== null
-    ? `${Math.round(state.playerBustProbability * 100)}%`
+
+  const playerBustPct = playerTotal !== null && playerTotal > 11 && !soft
+    ? `${Math.round((PLAYER_BUST_PROB[Math.min(playerTotal, 21)] ?? 0) * 100)}%`
     : (soft ? "0% (soft hand — ace absorbs one card)" : "0% (total too low to bust)");
+
+  const allCorrect = state.handDecisions.length > 0 && state.handDecisions.every(d => d.correct);
+  const anyWrong = state.handDecisions.some(d => !d.correct);
 
   const lines = [
     "Level 1 — Probability & Blackjack",
     `Key probability: ~31% chance any card drawn is a 10-value (10, J, Q, K — 16 out of 52 cards)`,
-    `Player hand: ${state.playerHand.map((c) => c.rank).join(", ")}${playerTotal !== null ? ` (total: ${playerTotal}, ${soft ? "soft" : "hard"})` : ""}`,
-    `Player bust probability if hitting: ${playerBustPct}`,
-    `Dealer upcard: ${state.dealerHand[0]?.rank ?? "none"} (dealer bust probability: ${dealerBustPct})`,
+    `Player hand at decision: ${displayHand.map(c => c.rank).join(", ")}${playerTotal !== null ? ` (total: ${playerTotal}, ${soft ? "soft" : "hard"})` : ""}`,
+    `Player bust probability if hitting from that total: ${playerBustPct}`,
+    `Dealer upcard: ${dealerUpcardForContext?.rank ?? "none"} (dealer bust probability: ${dealerBustPct})`,
     `Phase: ${state.phase}`,
-    `Last decision: ${state.lastDecisionCorrect === null ? "none yet" : state.lastDecisionCorrect ? "CORRECT" : "INCORRECT"}`,
+    `Last first-action decision: ${state.lastDecisionCorrect === null ? "none yet" : state.lastDecisionCorrect ? "CORRECT" : "INCORRECT"}`,
+    `All decisions this hand correct: ${allCorrect ? "yes" : anyWrong ? "no" : "no decisions yet"}`,
     `Streak: ${state.consecutiveCorrect} consecutive correct (need ${WIN_STREAK} to pass)`,
     `Session: ${state.correctDecisions}/${state.totalDecisions} correct decisions`,
+    ``,
+    `Decisions this hand:`,
+    formatDecisionsForContext(state.handDecisions),
   ];
+
+  if (state.phase === "tutor-feedback" && state.blockDecisionLog.length > 0) {
+    lines.push(``);
+    lines.push(`Block summary (last ${state.blockDecisionLog.length} hands):`);
+    lines.push(formatBlockLog(state.blockDecisionLog));
+  }
 
   return lines.join("\n");
 }

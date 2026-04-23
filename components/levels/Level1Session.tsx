@@ -22,14 +22,20 @@ import {
   getLevel1GameContext,
   getStageIntroContext,
   isConsecutiveWin,
+  appendBlockHandSummary,
 } from "@/game/levels/level1/gameLogic";
 import {
   computeBustQuizData,
+  computeSoftHandQuizData,
   evaluateStep1,
   evaluateStep2,
+  evaluateSoftStep1,
   getStage5QuizInitialContext,
   getStage5QuizStep1EvalContext,
   getStage5QuizStep2EvalContext,
+  getStage5QuizStep3EvalContext,
+  getSoftHandQuizInitialContext,
+  getSoftHandQuizStep1EvalContext,
 } from "@/game/levels/level1/quizLogic";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -38,6 +44,13 @@ interface ChatMessage {
   id: number;
   role: "tutor" | "student";
   text: string;
+}
+
+// Separate state for soft-hand quiz flow (not stored in Level1State to keep it lightweight)
+interface SoftQuizState {
+  active: true;
+  data: ReturnType<typeof computeSoftHandQuizData>;
+  step: 1 | 2;
 }
 
 let _msgId = 0;
@@ -126,7 +139,7 @@ function TutorSidebar({
         ))}
         {loading && (
           <div className="tutor-panel__message" style={{ color: "#64748b", fontStyle: "italic" }}>
-            Tutor is thinking…
+            Tutor is thinking...
           </div>
         )}
         <div ref={bottomRef} />
@@ -172,7 +185,7 @@ function TutorSidebar({
           <div className="tutor-panel__input-row">
             <input
               className="tutor-panel__input"
-              placeholder={showContinue ? "Ask a follow-up question…" : "Ask a probability question…"}
+              placeholder={showContinue ? "Ask a follow-up question..." : "Ask a probability question..."}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleSend()}
@@ -194,7 +207,10 @@ function TutorSidebar({
 
 // ─── Pure helper ──────────────────────────────────────────────────────────────
 
-function advanceAfterRound(s: Level1State): Level1State {
+function advanceAfterRound(
+  s: Level1State,
+  softQuizSetter: (q: SoftQuizState | null) => void
+): Level1State {
   if (s.stage === 2) {
     const handsAfter = s.stage2HandsPlayed + 1;
     if (handsAfter >= STAGE2_HAND_COUNT) {
@@ -202,14 +218,30 @@ function advanceAfterRound(s: Level1State): Level1State {
     }
     return startNewHand({ ...s, stage2HandsPlayed: handsAfter });
   }
+
   if (s.stage === 4) return { ...s, phase: "tutor-feedback" };
+
   if (s.stage === 5) {
-    // Wrong decision in Stage 5: interrupt with probability quiz
+    const firstDecision = s.handDecisions[0] ?? null;
+
+    // Soft hand wrong hit: trigger soft quiz (managed outside game state)
     if (
-      s.lastDecisionCorrect === false &&
+      firstDecision &&
+      !firstDecision.correct &&
+      firstDecision.action === "hit" &&
+      firstDecision.soft
+    ) {
+      const quizData = computeSoftHandQuizData(firstDecision.total, s.dealerHand[0]?.rank ?? "?");
+      softQuizSetter({ active: true, data: quizData, step: 1 });
+      return { ...s, phase: "bust-quiz" };
+    }
+
+    // Hard wrong decision: trigger probability quiz
+    if (
+      firstDecision &&
+      !firstDecision.correct &&
       s.lastWrongDecision !== null &&
-      s.lastWrongDecisionTotal !== null &&
-      !(s.lastWrongDecision === "hit" && (s.lastWrongDecisionSoft ?? false))
+      s.lastWrongDecisionTotal !== null
     ) {
       const bustQuizData = computeBustQuizData(
         s.lastWrongDecision,
@@ -219,12 +251,16 @@ function advanceAfterRound(s: Level1State): Level1State {
       );
       return { ...s, phase: "bust-quiz", bustQuizData, bustQuizStep: 1 };
     }
+
     const blockHandsAfter = s.stage5BlockHandsPlayed + 1;
+    const updatedLog = appendBlockHandSummary(s, blockHandsAfter);
+
     if (blockHandsAfter >= STAGE5_BLOCK_SIZE) {
-      return { ...s, phase: "tutor-feedback", stage5BlockHandsPlayed: blockHandsAfter };
+      return { ...s, phase: "tutor-feedback", stage5BlockHandsPlayed: blockHandsAfter, blockDecisionLog: updatedLog };
     }
-    return startNewHand({ ...s, stage5BlockHandsPlayed: blockHandsAfter });
+    return startNewHand({ ...s, stage5BlockHandsPlayed: blockHandsAfter, blockDecisionLog: updatedLog });
   }
+
   return s;
 }
 
@@ -233,6 +269,7 @@ function advanceAfterRound(s: Level1State): Level1State {
 export default function Level1Session({ level: _level }: { level: Level }) {
   const [state, setState] = useState<Level1State>(getInitialLevel1State);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [softQuiz, setSoftQuiz] = useState<SoftQuizState | null>(null);
   const mountFiredRef = useRef(false);
 
   const { callTutor, loading: tutorLoading } = useTutor({
@@ -266,10 +303,14 @@ export default function Level1Session({ level: _level }: { level: Level }) {
       else if (state.stage === 4 && !state.stage4IntroShown) fireTutor("explain", getStageIntroContext(4));
     } else if (state.phase === "tutor-feedback") {
       fireTutor("feedback", getLevel1GameContext(state));
-    } else if (state.phase === "bust-quiz" && state.bustQuizData) {
-      fireTutor("explain", getStage5QuizInitialContext(state.bustQuizData));
+    } else if (state.phase === "bust-quiz") {
+      if (softQuiz?.active) {
+        fireTutor("explain", getSoftHandQuizInitialContext(softQuiz.data));
+      } else if (state.bustQuizData) {
+        fireTutor("explain", getStage5QuizInitialContext(state.bustQuizData));
+      }
     }
-  }, [state.stage, state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.stage, state.phase, softQuiz]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-run dealer turn
   useEffect(() => {
@@ -281,7 +322,10 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   useEffect(() => {
     if (state.phase !== "round-over" || (state.stage !== 4 && state.stage !== 5)) return;
     const timer = setTimeout(() => {
-      setState((s) => (s.phase === "round-over" ? advanceAfterRound(s) : s));
+      setState((s) => {
+        if (s.phase !== "round-over") return s;
+        return advanceAfterRound(s, setSoftQuiz);
+      });
     }, 1200);
     return () => clearTimeout(timer);
   }, [state.phase, state.stage]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -299,7 +343,7 @@ export default function Level1Session({ level: _level }: { level: Level }) {
         if (s.stage === 4) {
           const handsAfter = s.stage4HandsPlayed + 1;
           if (handsAfter >= STAGE4_HAND_COUNT) {
-            return startNewHand({ ...s, stage: 5, stage4HandsPlayed: handsAfter, consecutiveCorrect: 0, stage5BlockHandsPlayed: 0 });
+            return startNewHand({ ...s, stage: 5, stage4HandsPlayed: handsAfter, consecutiveCorrect: 0, stage5BlockHandsPlayed: 0, blockDecisionLog: [] });
           }
           return startNewHand({ ...s, stage4HandsPlayed: handsAfter });
         }
@@ -307,11 +351,12 @@ export default function Level1Session({ level: _level }: { level: Level }) {
           if (isConsecutiveWin(s.consecutiveCorrect)) {
             return { ...s, phase: "session-over", sessionComplete: true };
           }
-          return startNewHand({ ...s, consecutiveCorrect: 0, stage5BlockHandsPlayed: 0 });
+          return startNewHand({ ...s, consecutiveCorrect: 0, stage5BlockHandsPlayed: 0, blockDecisionLog: [] });
         }
       }
       if (s.phase === "bust-quiz") {
-        return startNewHand({ ...s, stage5BlockHandsPlayed: 0 });
+        setSoftQuiz(null);
+        return startNewHand({ ...s, stage5BlockHandsPlayed: 0, blockDecisionLog: [] });
       }
       return s;
     });
@@ -326,7 +371,7 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   }, []);
 
   const handleNextHand = useCallback(() => {
-    setState((s) => (s.phase === "round-over" ? advanceAfterRound(s) : s));
+    setState((s) => (s.phase === "round-over" ? advanceAfterRound(s, setSoftQuiz) : s));
   }, []);
 
   const handleHint = useCallback(() => {
@@ -336,24 +381,44 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   const handleStudentMessage = useCallback(
     async (question: string) => {
       setMessages((prev) => [...prev, { id: nextMsgId(), role: "student", text: question }]);
-      if (state.phase === "bust-quiz" && state.bustQuizData) {
-        const step = state.bustQuizStep;
-        if (step === 1) {
-          const { correct, hint } = evaluateStep1(state.bustQuizData, question);
-          if (correct) setState((s) => ({ ...s, bustQuizStep: 2 as const }));
-          await fireTutor("explain", getStage5QuizStep1EvalContext(state.bustQuizData, question, correct, hint));
-        } else if (step === 2) {
-          const { correct, hint } = evaluateStep2(state.bustQuizData, question);
-          if (correct) setState((s) => ({ ...s, bustQuizStep: 3 as const }));
-          await fireTutor("explain", getStage5QuizStep2EvalContext(state.bustQuizData, question, correct, hint));
-        } else {
-          await fireTutor("explain", `Student follow-up after quiz: "${question}"\n\n${getLevel1GameContext(state)}`);
+
+      if (state.phase === "bust-quiz") {
+        // Soft hand quiz path
+        if (softQuiz?.active) {
+          if (softQuiz.step === 1) {
+            const { correct } = evaluateSoftStep1(softQuiz.data, question);
+            if (correct) setSoftQuiz((q) => q ? { ...q, step: 2 } : null);
+            await fireTutor("explain", getSoftHandQuizStep1EvalContext(softQuiz.data, question, correct));
+          } else {
+            await fireTutor("explain", `Student follow-up after soft quiz: "${question}"\n\n${getLevel1GameContext(state)}`);
+          }
+          return;
         }
-      } else {
-        await fireTutor("explain", `Student question: "${question}"\n\n${getLevel1GameContext(state)}`);
+
+        // Hard hand quiz path
+        if (state.bustQuizData) {
+          const step = state.bustQuizStep;
+          if (step === 1) {
+            const { correct, hint } = evaluateStep1(state.bustQuizData, question);
+            if (correct) setState((s) => ({ ...s, bustQuizStep: 2 as const }));
+            await fireTutor("explain", getStage5QuizStep1EvalContext(state.bustQuizData, question, correct, hint));
+          } else if (step === 2) {
+            const { correct, hint } = evaluateStep2(state.bustQuizData, question);
+            if (correct) setState((s) => ({ ...s, bustQuizStep: 3 as const }));
+            await fireTutor("explain", getStage5QuizStep2EvalContext(state.bustQuizData, question, correct, hint));
+          } else if (step === 3) {
+            setState((s) => ({ ...s, bustQuizStep: 4 as const }));
+            await fireTutor("explain", getStage5QuizStep3EvalContext(state.bustQuizData, question));
+          } else {
+            await fireTutor("explain", `Student follow-up after quiz: "${question}"\n\n${getLevel1GameContext(state)}`);
+          }
+        }
+        return;
       }
+
+      await fireTutor("explain", `Student question: "${question}"\n\n${getLevel1GameContext(state)}`);
     },
-    [fireTutor, state]
+    [fireTutor, state, softQuiz]
   );
 
   // ── Derived values ────────────────────────────────────────────────────────
@@ -366,7 +431,12 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   const dealerTotal =
     dealerReveal && state.dealerHand.length > 0 ? calculateHandValue(state.dealerHand) : null;
   const isForcedPhase = state.phase === "tutor-intro" || state.phase === "tutor-feedback";
-  const showQuizContinue = state.phase === "bust-quiz" && state.bustQuizStep === 3;
+
+  // Continue button appears after quiz step 4 (hard) or soft quiz step 2
+  const showQuizContinue =
+    state.phase === "bust-quiz" &&
+    (state.bustQuizStep === 4 || (softQuiz?.active && softQuiz.step === 2));
+
   const actionsEnabled = state.phase === "player-turn";
   const showStreak = state.stage === 5;
   const tenPct = `${Math.round(TEN_VALUE_PROBABILITY * 100)}%`;
@@ -394,6 +464,14 @@ export default function Level1Session({ level: _level }: { level: Level }) {
     state.lastOutcome === "loss" ? "Dealer wins." :
     state.lastOutcome === "push" ? "Push." : null;
 
+  // Decision badge: show only when the first decision is recorded
+  const firstDecision = state.handDecisions[0] ?? null;
+  const showDecisionBadge =
+    firstDecision !== null &&
+    (state.phase === "round-over" || state.phase === "tutor-feedback");
+  const allDecisionsCorrect = state.handDecisions.length > 0 && state.handDecisions.every(d => d.correct);
+  const anyDecisionWrong = state.handDecisions.some(d => !d.correct);
+
   // ── Session over ──────────────────────────────────────────────────────────
 
   if (state.phase === "session-over") {
@@ -420,7 +498,7 @@ export default function Level1Session({ level: _level }: { level: Level }) {
             background: "#14532d", color: "#4ade80",
             borderRadius: "0.5rem", padding: "0.75rem", fontWeight: 600,
           }}>
-            Streak: {WIN_STREAK} / {WIN_STREAK} ✓
+            Streak: {WIN_STREAK} / {WIN_STREAK}
           </div>
           <a href="/" className="action-btn" style={{ textAlign: "center", textDecoration: "none" }}>
             Back to Levels
@@ -547,17 +625,19 @@ export default function Level1Session({ level: _level }: { level: Level }) {
           )}
         </div>
 
-        {/* Decision correctness badge */}
-        {state.lastDecisionCorrect !== null &&
-          (state.phase === "round-over" || state.phase === "tutor-feedback") && (
+        {/* Decision correctness badge — reflects all decisions, not just first */}
+        {showDecisionBadge && (
           <div className={`decision-feedback ${
-            state.lastDecisionCorrect ? "decision-feedback--correct" : "decision-feedback--incorrect"
+            allDecisionsCorrect ? "decision-feedback--correct" :
+            anyDecisionWrong ? "decision-feedback--incorrect" : "decision-feedback--correct"
           }`}>
-            {state.lastDecisionCorrect ? "✓ Correct decision" : "✗ Incorrect decision"}
+            {allDecisionsCorrect
+              ? `All ${state.handDecisions.length} decision${state.handDecisions.length > 1 ? "s" : ""} correct`
+              : `Incorrect decision${anyDecisionWrong && state.handDecisions.length > 1 ? " (see tutor)" : ""}`}
           </div>
         )}
 
-        {/* Bottom-left: Hit / Stand (disabled during forced tutor phases) */}
+        {/* Bottom-left: Hit / Stand */}
         <div className="floor-bl">
           <button className="action-btn" onClick={handleHit} disabled={!actionsEnabled}>
             Hit
