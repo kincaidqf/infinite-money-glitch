@@ -12,18 +12,20 @@ import {
   type Level1Stage,
   type Level1Phase,
   HANDS_PER_STAGE,
-  STANDARD_DECK_SIZE,
   TEN_VALUE_CARD_COUNT,
   getInitialLevel1State,
   startNewHand,
   applyPlayerHit,
   applyPlayerStand,
+  applyPendingHitCard,
   runDealerPlay,
   formatCardFraction,
   getPlayerBustFraction,
   getHandFeedbackContext,
+  getFeedbackReflectionContext,
   getStageQuestionContext,
   getStudentAnswerContext,
+  getStudentQuestionContext,
   getStageAdvanceContext,
   getStageIntroContext,
 } from "@/game/levels/level1/gameLogic";
@@ -38,6 +40,23 @@ interface ChatMessage {
 
 let _msgId = 0;
 const nextMsgId = () => ++_msgId;
+
+function cleanTutorText(text: string): string {
+  const metadataLine = /^\s*(message_type|stage|student_goal|teaching_points|flow_note|forbidden|response_style|student_prompt|student_answer|student_question|decision_index|decision_result|student_action|level1_probability_action|level1_probability_action_hidden|opening_sentence|player_hand|player_total|player_bust_fraction_if_hit|player_bust_fraction_hidden|player_bust_category|player_bust_category_hidden|dealer_upcard|assumed_dealer_upcard|assumed_dealer_total|assumed_dealer_total_hidden|correct_assumed_dealer_total|correct_assumed_dealer_total_hidden|assumed_dealer_bust_fraction_if_forced_to_hit|assumed_dealer_bust_fraction_if_forced_to_hit_hidden|hand_outcome|session_accuracy|answer_result|estimate_result|comparison_hidden|correct_comparison|concept_covered|hands_played)\s*:/i;
+  const cleanedLines = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .replace(/^\s*(Explain|Game state|Tutor request|Task)\s*:\s*/i, "")
+        .replace(/^\s*\[[A-Z0-9_]+\]\s*/i, "")
+        .replace(/^\s*Stage\s+\d+\s*:\s*/i, "")
+        .trim()
+    )
+    .filter((line) => line && !metadataLine.test(line));
+
+  return cleanedLines.join(" ").replace(/\s+/g, " ").trim();
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -58,7 +77,7 @@ function EmptySlot() {
 function TutorSidebar({
   messages, loading, phase, stage,
   onAcknowledge, onKeepPracticing, onAdvanceStage,
-  canHint, canContinueFeedback, onHint, onStudentMessage,
+  canHint, canContinueFeedback, feedbackContinueLabel, onHint, onStudentMessage,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -69,6 +88,7 @@ function TutorSidebar({
   onAdvanceStage: () => void;
   canHint: boolean;
   canContinueFeedback: boolean;
+  feedbackContinueLabel: string;
   onHint: () => void;
   onStudentMessage: (q: string) => void;
 }) {
@@ -168,7 +188,7 @@ function TutorSidebar({
               disabled={loading || !canContinueFeedback}
               style={{ width: "100%" }}
             >
-              Next Hand
+              {feedbackContinueLabel}
             </button>
             <div className="tutor-panel__input-row">
               <input
@@ -225,7 +245,7 @@ function TutorSidebar({
 export default function Level1Session({ level }: { level: Level }) {
   const [state, setState] = useState<Level1State>(getInitialLevel1State);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [feedbackAnsweredHandId, setFeedbackAnsweredHandId] = useState<number | null>(null);
+  const [feedbackAnsweredDecisionKey, setFeedbackAnsweredDecisionKey] = useState<string | null>(null);
   void level;
 
   const mountFiredRef = useRef(false);
@@ -243,7 +263,8 @@ export default function Level1Session({ level }: { level: Level }) {
   const fireTutor = useCallback(
     async (action: "feedback" | "hint" | "explain", context: string) => {
       const msg = await callTutor(action, context, 1);
-      if (msg) setMessages((prev) => [...prev, { id: nextMsgId(), role: "tutor", text: msg }]);
+      const cleanMsg = msg ? cleanTutorText(msg) : "";
+      if (cleanMsg) setMessages((prev) => [...prev, { id: nextMsgId(), role: "tutor", text: cleanMsg }]);
     },
     [callTutor]
   );
@@ -273,12 +294,12 @@ export default function Level1Session({ level }: { level: Level }) {
     fireTutor("explain", getStageQuestionContext(state));
   }, [state.handId, state.phase, state.stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Tutor feedback after each hand
+  // Tutor feedback after each player decision
   useEffect(() => {
     if (state.phase !== "tutor-feedback") return;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fireTutor("feedback", getHandFeedbackContext(state));
-  }, [state.phase, state.handId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.phase, state.handId, state.pendingFeedbackDecisionIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stage advance check when entering tutor-advance
   useEffect(() => {
@@ -302,13 +323,9 @@ export default function Level1Session({ level }: { level: Level }) {
         if (s.phase !== "round-over") return s;
         const handsAfter = s.handsInStage + 1;
         const base = { ...s, handsInStage: handsAfter };
-        if (s.handDecisions.length === 0) {
-          // Natural BJ: no decision to review
-          return handsAfter >= HANDS_PER_STAGE
-            ? { ...base, phase: "tutor-advance" }
-            : startNewHand(base);
-        }
-        return { ...base, phase: "tutor-feedback" };
+        return handsAfter >= HANDS_PER_STAGE
+          ? { ...base, phase: "tutor-advance" }
+          : startNewHand(base);
       });
     }, 1200);
     return () => clearTimeout(timer);
@@ -320,13 +337,20 @@ export default function Level1Session({ level }: { level: Level }) {
     setState((s) => {
       if (s.phase === "tutor-intro") return startNewHand(s);
       if (s.phase === "tutor-feedback") {
-        if (s.handDecisions.length > 0 && feedbackAnsweredHandId !== s.handId) return s;
-        if (s.handsInStage >= HANDS_PER_STAGE) return { ...s, phase: "tutor-advance" };
-        return startNewHand(s);
+        const feedbackKey = `${s.handId}:${s.pendingFeedbackDecisionIndex ?? "none"}`;
+        if (s.handDecisions.length > 0 && feedbackAnsweredDecisionKey !== feedbackKey) return s;
+        if (!s.phaseAfterFeedback) return s;
+        const nextState = s.pendingHitCard ? applyPendingHitCard(s) : s;
+        return {
+          ...nextState,
+          phase: s.phaseAfterFeedback,
+          pendingFeedbackDecisionIndex: null,
+          phaseAfterFeedback: null,
+        };
       }
       return s;
     });
-  }, [feedbackAnsweredHandId]);
+  }, [feedbackAnsweredDecisionKey]);
 
   const handleAdvanceStage = useCallback(() => {
     setState((s) => {
@@ -369,11 +393,15 @@ export default function Level1Session({ level }: { level: Level }) {
       }
 
       if (state.phase === "tutor-feedback") {
-        setFeedbackAnsweredHandId(state.handId);
-        await fireTutor(
-          "explain",
-          `[FEEDBACK_REFLECTION_ANSWER] Student answered the required reflection after hand ${state.handId}: "${question}". Task: Acknowledge in 1 short sentence. Do not ask another question.`
-        );
+        const looksLikeQuestion =
+          /\?$/.test(question.trim()) ||
+          /^(why|how|what|when|where|who|which|is|are|do|does|can|could|should|would|will)\b/i.test(question.trim());
+        if (looksLikeQuestion) {
+          await fireTutor("explain", getStudentQuestionContext(state, question));
+          return;
+        }
+        setFeedbackAnsweredDecisionKey(`${state.handId}:${state.pendingFeedbackDecisionIndex ?? "none"}`);
+        await fireTutor("explain", getFeedbackReflectionContext(state, question));
         return;
       }
 
@@ -385,7 +413,7 @@ export default function Level1Session({ level }: { level: Level }) {
         }
       }
 
-      await fireTutor("explain", `[STUDENT_QUESTION] "${question}"\n${getHandFeedbackContext(state)}`);
+      await fireTutor("explain", getStudentQuestionContext(state, question));
     },
     [fireTutor, state, handleAdvanceStage, handleKeepPracticing]
   );
@@ -395,22 +423,29 @@ export default function Level1Session({ level }: { level: Level }) {
   const playerTotal = state.playerHand.length > 0 ? calculateHandValue(state.playerHand) : null;
   const dealerReveal =
     state.phase === "round-over" ||
-    state.phase === "dealer-turn" ||
-    state.phase === "tutor-feedback";
+    state.phase === "dealer-turn";
   const dealerTotal =
     dealerReveal && state.dealerHand.length > 0 ? calculateHandValue(state.dealerHand) : null;
   const actionsEnabled = state.phase === "player-turn";
   const tenFraction = formatCardFraction(TEN_VALUE_CARD_COUNT);
+  const handInProgress =
+    state.playerHand.length > 0 &&
+    (state.phase === "player-turn" || state.phase === "tutor-feedback" || state.phase === "dealer-turn");
   const playerBustFraction =
     state.playerHand.length > 0 && state.playerBustProbability !== null
       ? getPlayerBustFraction(state.playerHand)
       : null;
-  const dealerBustFraction =
-    state.dealerBustProbability !== null
-      ? formatCardFraction(Math.round(state.dealerBustProbability * STANDARD_DECK_SIZE))
+  const assumedDealerTotal =
+    state.assumedDealerTotal !== null && handInProgress
+      ? state.assumedDealerTotal
       : null;
   const feedbackRequiresAnswer = state.phase === "tutor-feedback" && state.handDecisions.length > 0;
-  const canContinueFeedback = !feedbackRequiresAnswer || feedbackAnsweredHandId === state.handId;
+  const currentFeedbackDecisionKey =
+    state.pendingFeedbackDecisionIndex !== null ? `${state.handId}:${state.pendingFeedbackDecisionIndex}` : null;
+  const canContinueFeedback =
+    !feedbackRequiresAnswer ||
+    (currentFeedbackDecisionKey !== null && feedbackAnsweredDecisionKey === currentFeedbackDecisionKey);
+  const feedbackContinueLabel = state.phase === "tutor-feedback" ? "Continue" : "Next Hand";
 
   const outcomeLabel =
     state.lastOutcome === "win" ? "You win!" :
@@ -425,9 +460,9 @@ export default function Level1Session({ level }: { level: Level }) {
 
   const stageLabel =
     state.stage === 0 ? "Stage 0 — Basics" :
-    state.stage === 1 ? "Stage 1 — Hand vs. Dealer" :
-    state.stage === 2 ? "Stage 2 — Bust Probability" :
-    state.stage === 3 ? "Stage 3 — Dealer Probability" :
+    state.stage === 1 ? "Stage 1 — Assume 10" :
+    state.stage === 2 ? "Stage 2 — Compare Totals" :
+    state.stage === 3 ? "Stage 3 — Gap and Risk" :
     "Stage 4 — Decision Quality";
 
   // ── Session over ─────────────────────────────────────────────────────────────
@@ -449,8 +484,8 @@ export default function Level1Session({ level }: { level: Level }) {
             Level 1 Complete!
           </h2>
           <p style={{ color: "#94a3b8", lineHeight: 1.6 }}>
-            You worked through all five stages: blackjack basics, hand vs. dealer, bust probability,
-            dealer bust probability, and decision quality over outcomes.
+            You worked through all five stages: blackjack basics, the assume-10 rule, comparing totals,
+            gap and risk, and decision quality over outcomes.
           </p>
           <div style={{
             background: "#14532d", color: "#4ade80",
@@ -499,12 +534,12 @@ export default function Level1Session({ level }: { level: Level }) {
                 </div>
               </>
             )}
-            {actionsEnabled && dealerBustFraction !== null && (
+            {actionsEnabled && assumedDealerTotal !== null && (
               <>
                 <div className="game-hud__divider" />
                 <div className="game-hud__stat">
-                  <span className="game-hud__label">Dealer Bust</span>
-                  <span className="game-hud__value game-hud__value--pos">{dealerBustFraction}</span>
+                  <span className="game-hud__label">Assumed Dealer</span>
+                  <span className="game-hud__value game-hud__value--pos">{assumedDealerTotal}</span>
                 </div>
               </>
             )}
@@ -608,6 +643,7 @@ export default function Level1Session({ level }: { level: Level }) {
         onAdvanceStage={handleAdvanceStage}
         canHint={actionsEnabled}
         canContinueFeedback={canContinueFeedback}
+        feedbackContinueLabel={feedbackContinueLabel}
         onHint={handleHint}
         onStudentMessage={handleStudentMessage}
       />

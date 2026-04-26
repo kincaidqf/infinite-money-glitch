@@ -32,8 +32,9 @@ export function isBust(cards: Card[]): boolean {
 }
 
 export function isSoft(cards: Card[]): boolean {
-  const hasAce = cards.some((c) => c.rank === "A");
-  if (!hasAce) return false;
-  const hardTotal = cards.reduce((sum, c) => sum + (c.rank === "A" ? 1 : c.blackjackValue), 0);
-  return hardTotal + 10 <= 21;
+  const aceIndex = cards.findIndex((c) => c.rank === "A");
+  if (aceIndex === -1) return false;
+  const sumExcludingAce = cards.reduce((sum, c, i) =>
+    i === aceIndex ? sum : sum + (c.rank === "A" ? 1 : c.blackjackValue), 0);
+  return sumExcludingAce < 10;
 }
