@@ -20,7 +20,7 @@ function shuffleCards(cards: Card[]): Card[] {
 export function initShoe(numDecks: number = 1): DeckState {
   const cards: Card[] = [];
   for (let i = 0; i < numDecks; i++) {
-    cards.push(...buildDeck());
+    cards.push(...buildDeck().map((c) => ({ ...c, id: `d${i}_${c.id}` })));
   }
   return {
     shoe: shuffleCards(cards),

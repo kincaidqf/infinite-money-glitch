@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import type { Level } from "@/lib/types";
 import type { Card } from "@/lib/cards";
 import { getCardImagePath, getBackImagePath, calculateHandValue } from "@/game/cardUtils";
@@ -11,12 +12,15 @@ import {
   type Level1Stage,
   type Level1Phase,
   HANDS_PER_STAGE,
-  TEN_VALUE_PROBABILITY,
+  STANDARD_DECK_SIZE,
+  TEN_VALUE_CARD_COUNT,
   getInitialLevel1State,
   startNewHand,
   applyPlayerHit,
   applyPlayerStand,
   runDealerPlay,
+  formatCardFraction,
+  getPlayerBustFraction,
   getHandFeedbackContext,
   getStageQuestionContext,
   getStudentAnswerContext,
@@ -54,7 +58,7 @@ function EmptySlot() {
 function TutorSidebar({
   messages, loading, phase, stage,
   onAcknowledge, onKeepPracticing, onAdvanceStage,
-  canHint, onHint, onStudentMessage,
+  canHint, canContinueFeedback, onHint, onStudentMessage,
 }: {
   messages: ChatMessage[];
   loading: boolean;
@@ -64,6 +68,7 @@ function TutorSidebar({
   onKeepPracticing: () => void;
   onAdvanceStage: () => void;
   canHint: boolean;
+  canContinueFeedback: boolean;
   onHint: () => void;
   onStudentMessage: (q: string) => void;
 }) {
@@ -160,7 +165,7 @@ function TutorSidebar({
             <button
               className="action-btn action-btn--deal"
               onClick={onAcknowledge}
-              disabled={loading}
+              disabled={loading || !canContinueFeedback}
               style={{ width: "100%" }}
             >
               Next Hand
@@ -168,14 +173,14 @@ function TutorSidebar({
             <div className="tutor-panel__input-row">
               <input
                 className="tutor-panel__input"
-                placeholder="Ask a follow-up question..."
+                placeholder="Answer the tutor's question..."
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSend()}
                 disabled={loading}
               />
               <button className="tutor-panel__send" onClick={handleSend} disabled={loading || !input.trim()}>
-                Ask
+                Send
               </button>
             </div>
           </div>
@@ -217,9 +222,11 @@ function TutorSidebar({
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function Level1Session({ level: _level }: { level: Level }) {
+export default function Level1Session({ level }: { level: Level }) {
   const [state, setState] = useState<Level1State>(getInitialLevel1State);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [feedbackAnsweredHandId, setFeedbackAnsweredHandId] = useState<number | null>(null);
+  void level;
 
   const mountFiredRef = useRef(false);
   const lastQuestionedHandRef = useRef(-1);
@@ -245,12 +252,14 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   useEffect(() => {
     if (mountFiredRef.current) return;
     mountFiredRef.current = true;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fireTutor("explain", getStageIntroContext(0));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stage intro for stages 1-4 when entering tutor-intro
   useEffect(() => {
     if (state.phase !== "tutor-intro" || state.stage === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fireTutor("explain", getStageIntroContext(state.stage));
   }, [state.stage, state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -260,26 +269,30 @@ export default function Level1Session({ level: _level }: { level: Level }) {
     if (state.stage < 1 || state.stage > 3) return;
     if (lastQuestionedHandRef.current === state.handId) return;
     lastQuestionedHandRef.current = state.handId;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fireTutor("explain", getStageQuestionContext(state));
   }, [state.handId, state.phase, state.stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Tutor feedback after each hand
   useEffect(() => {
     if (state.phase !== "tutor-feedback") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fireTutor("feedback", getHandFeedbackContext(state));
-  }, [state.phase, state.handId]); // eslint-disable-line react-deps
+  }, [state.phase, state.handId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stage advance check when entering tutor-advance
   useEffect(() => {
     if (state.phase !== "tutor-advance") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     fireTutor("explain", getStageAdvanceContext(state));
-  }, [state.phase, state.stage]); // eslint-disable-line react-deps
+  }, [state.phase, state.stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-run dealer
   useEffect(() => {
     if (state.phase !== "dealer-turn") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState((s) => runDealerPlay(s));
-  }, [state.phase]); // eslint-disable-line react-exhaustive-deps
+  }, [state.phase]);
 
   // Auto-advance from round-over
   useEffect(() => {
@@ -299,7 +312,7 @@ export default function Level1Session({ level: _level }: { level: Level }) {
       });
     }, 1200);
     return () => clearTimeout(timer);
-  }, [state.phase, state.handId]); // eslint-disable-line react-exhaustive-deps
+  }, [state.phase, state.handId]);
 
   // ── Action handlers ──────────────────────────────────────────────────────────
 
@@ -307,12 +320,13 @@ export default function Level1Session({ level: _level }: { level: Level }) {
     setState((s) => {
       if (s.phase === "tutor-intro") return startNewHand(s);
       if (s.phase === "tutor-feedback") {
+        if (s.handDecisions.length > 0 && feedbackAnsweredHandId !== s.handId) return s;
         if (s.handsInStage >= HANDS_PER_STAGE) return { ...s, phase: "tutor-advance" };
         return startNewHand(s);
       }
       return s;
     });
-  }, []);
+  }, [feedbackAnsweredHandId]);
 
   const handleAdvanceStage = useCallback(() => {
     setState((s) => {
@@ -354,6 +368,15 @@ export default function Level1Session({ level: _level }: { level: Level }) {
         return;
       }
 
+      if (state.phase === "tutor-feedback") {
+        setFeedbackAnsweredHandId(state.handId);
+        await fireTutor(
+          "explain",
+          `[FEEDBACK_REFLECTION_ANSWER] Student answered the required reflection after hand ${state.handId}: "${question}". Task: Acknowledge in 1 short sentence. Do not ask another question.`
+        );
+        return;
+      }
+
       if (state.phase === "player-turn" && state.stage >= 1 && state.stage <= 3) {
         if (lastAnsweredHandRef.current !== state.handId) {
           lastAnsweredHandRef.current = state.handId;
@@ -377,15 +400,17 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   const dealerTotal =
     dealerReveal && state.dealerHand.length > 0 ? calculateHandValue(state.dealerHand) : null;
   const actionsEnabled = state.phase === "player-turn";
-  const tenPct = `${Math.round(TEN_VALUE_PROBABILITY * 100)}%`;
-  const playerBustPct =
-    state.playerBustProbability !== null
-      ? `${Math.round(state.playerBustProbability * 100)}%`
+  const tenFraction = formatCardFraction(TEN_VALUE_CARD_COUNT);
+  const playerBustFraction =
+    state.playerHand.length > 0 && state.playerBustProbability !== null
+      ? getPlayerBustFraction(state.playerHand)
       : null;
-  const dealerBustPct =
+  const dealerBustFraction =
     state.dealerBustProbability !== null
-      ? `${Math.round(state.dealerBustProbability * 100)}%`
+      ? formatCardFraction(Math.round(state.dealerBustProbability * STANDARD_DECK_SIZE))
       : null;
+  const feedbackRequiresAnswer = state.phase === "tutor-feedback" && state.handDecisions.length > 0;
+  const canContinueFeedback = !feedbackRequiresAnswer || feedbackAnsweredHandId === state.handId;
 
   const outcomeLabel =
     state.lastOutcome === "win" ? "You win!" :
@@ -433,9 +458,9 @@ export default function Level1Session({ level: _level }: { level: Level }) {
           }}>
             Accuracy: {state.correctDecisions} / {state.totalDecisions} correct decisions
           </div>
-          <a href="/" className="action-btn" style={{ textAlign: "center", textDecoration: "none" }}>
+          <Link href="/" className="action-btn" style={{ textAlign: "center", textDecoration: "none" }}>
             Back to Levels
-          </a>
+          </Link>
         </div>
       </div>
     );
@@ -456,10 +481,10 @@ export default function Level1Session({ level: _level }: { level: Level }) {
             </div>
             <div className="game-hud__divider" />
             <div className="game-hud__stat">
-              <span className="game-hud__label">P(Ten-Value)</span>
-              <span className="game-hud__value game-hud__value--pos">{tenPct}</span>
+              <span className="game-hud__label">Ten-Value Cards</span>
+              <span className="game-hud__value game-hud__value--pos">{tenFraction}</span>
             </div>
-            {actionsEnabled && playerBustPct !== null && (
+            {actionsEnabled && playerBustFraction !== null && (
               <>
                 <div className="game-hud__divider" />
                 <div className="game-hud__stat">
@@ -469,17 +494,17 @@ export default function Level1Session({ level: _level }: { level: Level }) {
                       ? "game-hud__value--neg"
                       : "game-hud__value--pos"
                   }`}>
-                    {playerBustPct}
+                    {playerBustFraction}
                   </span>
                 </div>
               </>
             )}
-            {actionsEnabled && dealerBustPct !== null && (
+            {actionsEnabled && dealerBustFraction !== null && (
               <>
                 <div className="game-hud__divider" />
                 <div className="game-hud__stat">
                   <span className="game-hud__label">Dealer Bust</span>
-                  <span className="game-hud__value game-hud__value--pos">{dealerBustPct}</span>
+                  <span className="game-hud__value game-hud__value--pos">{dealerBustFraction}</span>
                 </div>
               </>
             )}
@@ -582,6 +607,7 @@ export default function Level1Session({ level: _level }: { level: Level }) {
         onKeepPracticing={handleKeepPracticing}
         onAdvanceStage={handleAdvanceStage}
         canHint={actionsEnabled}
+        canContinueFeedback={canContinueFeedback}
         onHint={handleHint}
         onStudentMessage={handleStudentMessage}
       />

@@ -1,7 +1,7 @@
 import type { Card } from "@/lib/cards";
 import type { DeckState } from "@/game/deckState";
 import { calculateHandValue, isSoft, isBust } from "@/game/cardUtils";
-import { getBasicStrategyAction } from "@/game/basicStrategy";
+import { evaluateDecision } from "@/game/basicStrategy";
 import { initShoe, dealCard } from "@/game/deckState";
 
 export type Level1Stage = 0 | 1 | 2 | 3 | 4;
@@ -15,7 +15,8 @@ export type Level1Phase =
   | "session-over";
 
 export const HANDS_PER_STAGE = 5;
-export const TEN_VALUE_PROBABILITY = 16 / 52;
+export const STANDARD_DECK_SIZE = 52;
+export const TEN_VALUE_CARD_COUNT = 16;
 
 export interface HandDecision {
   action: "hit" | "stand";
@@ -23,6 +24,7 @@ export interface HandDecision {
   soft: boolean;
   correct: boolean;
   dealerUpcard: string;
+  basicStrategyAction: "hit" | "stand";
 }
 
 export interface Level1State {
@@ -58,6 +60,11 @@ export const PLAYER_BUST_PROB: Record<number, number> = {
   17: 36 / 52, 18: 40 / 52, 19: 44 / 52, 20: 48 / 52, 21: 52 / 52,
 };
 
+export const PLAYER_BUST_COUNTS: Record<number, number> = {
+  12: 16, 13: 20, 14: 24, 15: 28, 16: 32,
+  17: 36, 18: 40, 19: 44, 20: 48, 21: 52,
+};
+
 export function getPlayerBustProbability(hand: Card[]): number | null {
   if (hand.length === 0) return null;
   if (isSoft(hand)) return 0;
@@ -70,6 +77,33 @@ export function getPlayerBustProbability(hand: Card[]): number | null {
 export function getDealerBustProbability(upcard: Card | undefined): number | null {
   if (!upcard) return null;
   return DEALER_BUST_PROB[upcard.rank] ?? null;
+}
+
+export function formatCardFraction(count: number): string {
+  return `${count} out of ${STANDARD_DECK_SIZE}`;
+}
+
+function getPlayerBustCountFromTotal(total: number, soft: boolean): number {
+  if (soft || total <= 11) return 0;
+  if (total > 21) return STANDARD_DECK_SIZE;
+  return PLAYER_BUST_COUNTS[total] ?? 0;
+}
+
+export function getPlayerBustFraction(hand: Card[]): string {
+  if (hand.length === 0) return "N/A";
+  return formatCardFraction(getPlayerBustCountFromTotal(calculateHandValue(hand), isSoft(hand)));
+}
+
+function getDealerBustFraction(upcard: Card | undefined): string {
+  if (!upcard) return "N/A";
+  const count = Math.round((DEALER_BUST_PROB[upcard.rank] ?? 0) * STANDARD_DECK_SIZE);
+  return formatCardFraction(count);
+}
+
+function getBustRiskCategory(bustCount: number): "low" | "medium" | "high" {
+  if (bustCount < 16) return "low";
+  if (bustCount <= 26) return "medium";
+  return "high";
 }
 
 export function getInitialLevel1State(): Level1State {
@@ -100,11 +134,18 @@ export function startNewHand(state: Level1State): Level1State {
   let shoe = state.shoe;
   if (shoe.shoe.length < 15) shoe = initShoe(6);
 
-  let p1: Card, p2: Card, d1: Card, d2: Card;
-  ({ card: p1, newState: shoe } = dealCard(shoe));
-  ({ card: d1, newState: shoe } = dealCard(shoe));
-  ({ card: p2, newState: shoe } = dealCard(shoe));
-  ({ card: d2, newState: shoe } = dealCard(shoe));
+  const firstPlayerDeal = dealCard(shoe);
+  const p1 = firstPlayerDeal.card;
+  shoe = firstPlayerDeal.newState;
+  const firstDealerDeal = dealCard(shoe);
+  const d1 = firstDealerDeal.card;
+  shoe = firstDealerDeal.newState;
+  const secondPlayerDeal = dealCard(shoe);
+  const p2 = secondPlayerDeal.card;
+  shoe = secondPlayerDeal.newState;
+  const secondDealerDeal = dealCard(shoe);
+  const d2 = secondDealerDeal.card;
+  shoe = secondDealerDeal.newState;
 
   const playerHand = [p1, p2];
   const naturalBJ = calculateHandValue(playerHand) === 21;
@@ -128,17 +169,28 @@ export function startNewHand(state: Level1State): Level1State {
 }
 
 function getBasicStrategyHitStand(playerHand: Card[], dealerUpcard: Card): "hit" | "stand" {
-  const code = getBasicStrategyAction(playerHand, dealerUpcard);
-  return code === "S" ? "stand" : "hit";
+  const hitResult = evaluateDecision(playerHand, dealerUpcard, "hit", false);
+  if (hitResult.correct) return "hit";
+  const standResult = evaluateDecision(playerHand, dealerUpcard, "stand", false);
+  if (standResult.correct) return "stand";
+  return "hit";
 }
 
 function recordDecision(state: Level1State, action: "hit" | "stand"): Partial<Level1State> {
   const total = calculateHandValue(state.playerHand);
   const soft = isSoft(state.playerHand);
   const dealerUpcard = state.dealerHand[0];
-  const correct = action === getBasicStrategyHitStand(state.playerHand, dealerUpcard);
+  const basicStrategyAction = getBasicStrategyHitStand(state.playerHand, dealerUpcard);
+  const correct = action === basicStrategyAction;
   const isFirst = state.handDecisions.length === 0;
-  const decision: HandDecision = { action, total, soft, correct, dealerUpcard: dealerUpcard?.rank ?? "?" };
+  const decision: HandDecision = {
+    action,
+    total,
+    soft,
+    correct,
+    dealerUpcard: dealerUpcard?.rank ?? "?",
+    basicStrategyAction,
+  };
 
   return {
     correctDecisions: isFirst ? state.correctDecisions + (correct ? 1 : 0) : state.correctDecisions,
@@ -152,8 +204,9 @@ function recordDecision(state: Level1State, action: "hit" | "stand"): Partial<Le
 
 export function applyPlayerHit(state: Level1State): Level1State {
   let { shoe } = state;
-  let card: Card;
-  ({ card, newState: shoe } = dealCard(shoe));
+  const hitDeal = dealCard(shoe);
+  const card = hitDeal.card;
+  shoe = hitDeal.newState;
   const playerHand = [...state.playerHand, card];
   const busted = isBust(playerHand);
   const got21 = !busted && calculateHandValue(playerHand) === 21;
@@ -182,8 +235,9 @@ export function runDealerPlay(state: Level1State): Level1State {
   while (true) {
     const total = calculateHandValue(dealerHand);
     if (total > 17 || (total === 17 && !isSoft(dealerHand))) break;
-    let card: Card;
-    ({ card, newState: shoe } = dealCard(shoe));
+    const dealerDeal = dealCard(shoe);
+    const card = dealerDeal.card;
+    shoe = dealerDeal.newState;
     dealerHand = [...dealerHand, card];
   }
 
@@ -215,23 +269,26 @@ export function getHandFeedbackContext(state: Level1State): string {
   const soft = displayHand.length > 0 ? isSoft(displayHand) : false;
   const upcard = state.decisionDealerUpcard ?? state.dealerHand[0];
   const dealerIsStrong = upcard ? upcard.blackjackValue >= 7 : null;
-  const dealerBustPct = upcard ? Math.round((DEALER_BUST_PROB[upcard.rank] ?? 0) * 100) : null;
-  const playerBustPct = playerTotal !== null && playerTotal > 11 && !soft
-    ? Math.round((PLAYER_BUST_PROB[Math.min(playerTotal, 21)] ?? 0) * 100)
-    : null;
+  const playerBustFraction = displayHand.length > 0 ? getPlayerBustFraction(displayHand) : "N/A";
+  const dealerBustFraction = getDealerBustFraction(upcard);
   const firstDecision = state.handDecisions[0];
   const wasCorrect = firstDecision?.correct ?? null;
+  const basicStrategyAction = firstDecision?.basicStrategyAction ?? (
+    upcard && displayHand.length > 0 ? getBasicStrategyHitStand(displayHand, upcard) : null
+  );
 
   return [
     `Stage: ${state.stage}`,
-    `Decision: ${wasCorrect === null ? "N/A (natural blackjack)" : wasCorrect ? "CORRECT" : "INCORRECT"}`,
+    `Decision correctness: ${wasCorrect === null ? "N/A (natural blackjack)" : wasCorrect ? "CORRECT" : "INCORRECT"}`,
     `Player hand at decision: ${displayHand.map(c => c.rank).join(", ")} (total: ${playerTotal ?? "N/A"}, ${soft ? "soft" : "hard"})`,
     `Player action: ${firstDecision?.action ?? "none"}`,
-    `Player bust probability if hitting: ${soft ? "0% (soft hand)" : playerBustPct !== null ? `${playerBustPct}%` : "N/A"}`,
+    `Basic strategy action: ${basicStrategyAction ?? "N/A"}`,
+    `Player bust fraction if hitting: ${playerBustFraction} cards would bust this hand`,
     `Dealer upcard: ${upcard?.rank ?? "none"} (${dealerIsStrong !== null ? (dealerIsStrong ? "STRONG: 7-A" : "WEAK: 2-6") : "unknown"})`,
-    `Dealer bust probability: ${dealerBustPct !== null ? `${dealerBustPct}%` : "N/A"}`,
+    `Dealer bust fraction: ${dealerBustFraction} chance the dealer busts from this upcard`,
     `Hand outcome: ${state.lastOutcome ?? "unknown"}`,
     `Session accuracy: ${state.correctDecisions}/${state.totalDecisions} correct`,
+    `Tutor response requirement: Write exactly 4 sentences. Sentence 1 must be "Decision: ${wasCorrect ? "CORRECT" : "INCORRECT"} - you chose ${firstDecision?.action ?? "none"}; basic strategy says ${basicStrategyAction ?? "N/A"}." Sentence 4 must be exactly one question for the student.`,
   ].join("\n");
 }
 
@@ -240,9 +297,10 @@ export function getStageQuestionContext(state: Level1State): string {
   const soft = isSoft(state.playerHand);
   const upcard = state.dealerHand[0];
   const dealerIsStrong = upcard ? upcard.blackjackValue >= 7 : true;
-  const bustPct = total > 11 && !soft ? Math.round((PLAYER_BUST_PROB[Math.min(total, 21)] ?? 0) * 100) : 0;
-  const dealerBustPct = upcard ? Math.round((DEALER_BUST_PROB[upcard.rank] ?? 0) * 100) : 0;
-  const category = bustPct < 30 ? "low" : bustPct <= 50 ? "medium" : "high";
+  const bustCount = getPlayerBustCountFromTotal(total, soft);
+  const bustFraction = formatCardFraction(bustCount);
+  const dealerBustFraction = getDealerBustFraction(upcard);
+  const category = getBustRiskCategory(bustCount);
 
   if (state.stage === 1) {
     return [
@@ -253,14 +311,14 @@ export function getStageQuestionContext(state: Level1State): string {
 
   if (state.stage === 2) {
     return [
-      `[STAGE_2_QUESTION] New hand. Player: ${state.playerHand.map(c => c.rank).join(", ")} (total: ${total}${soft ? " soft" : ""}). Actual bust probability: ${bustPct}% (${category}) — do not reveal yet.`,
-      `Task: Ask the student to estimate their bust risk: "Before I show you the exact number, estimate your bust risk if you hit — low (under 30%), medium (30-50%), or high (over 50%)?" 1-2 sentences.`,
+      `[STAGE_2_QUESTION] New hand. Player: ${state.playerHand.map(c => c.rank).join(", ")} (total: ${total}${soft ? " soft" : ""}). Actual bust fraction: ${bustFraction} cards would bust this hand (${category}) - do not reveal yet.`,
+      `Task: Ask the student to estimate their bust risk: "Before I show you the exact count, estimate your bust risk if you hit - low, medium, or high?" 1-2 sentences.`,
     ].join("\n");
   }
 
   if (state.stage === 3) {
     return [
-      `[STAGE_3_QUESTION] New hand. Dealer upcard: ${upcard?.rank} (${dealerIsStrong ? "STRONG" : "WEAK"}, busts ${dealerBustPct}%) — do not reveal the percentage yet.`,
+      `[STAGE_3_QUESTION] New hand. Dealer upcard: ${upcard?.rank} (${dealerIsStrong ? "STRONG" : "WEAK"}, dealer bust fraction: ${dealerBustFraction}) - do not reveal the fraction yet.`,
       `Task: Ask: "The dealer is showing a ${upcard?.rank}. Would you call this a strong or weak dealer card?" 1-2 sentences.`,
     ].join("\n");
   }
@@ -273,8 +331,9 @@ export function getStudentAnswerContext(state: Level1State, answer: string): str
   const soft = isSoft(state.playerHand);
   const upcard = state.dealerHand[0];
   const dealerIsStrong = upcard ? upcard.blackjackValue >= 7 : true;
-  const bustPct = total > 11 && !soft ? Math.round((PLAYER_BUST_PROB[Math.min(total, 21)] ?? 0) * 100) : 0;
-  const dealerBustPct = upcard ? Math.round((DEALER_BUST_PROB[upcard.rank] ?? 0) * 100) : 0;
+  const bustCount = getPlayerBustCountFromTotal(total, soft);
+  const bustFraction = formatCardFraction(bustCount);
+  const dealerBustFraction = getDealerBustFraction(upcard);
   const lower = answer.toLowerCase();
 
   if (state.stage === 1) {
@@ -286,11 +345,11 @@ export function getStudentAnswerContext(state: Level1State, answer: string): str
   }
 
   if (state.stage === 2) {
-    const actualCategory = bustPct < 30 ? "low" : bustPct <= 50 ? "medium" : "high";
+    const actualCategory = getBustRiskCategory(bustCount);
     const guessedCorrect = lower.includes(actualCategory);
     return [
-      `[STAGE_2_ANSWER] Student estimated: "${answer}". Actual bust probability: ${bustPct}% (${actualCategory}). Estimate was ${guessedCorrect ? "CORRECT" : "INCORRECT"}.`,
-      `Task: Confirm or correct their estimate in 1 sentence. Reveal the actual number (${bustPct}%). Then ask them to decide: hit or stand?`,
+      `[STAGE_2_ANSWER] Student estimated: "${answer}". Actual bust fraction: ${bustFraction} cards would bust this hand (${actualCategory}). Estimate was ${guessedCorrect ? "CORRECT" : "INCORRECT"}.`,
+      `Task: Confirm or correct their estimate in 1 sentence. Reveal the actual fraction (${bustFraction}). Then ask them to decide: hit or stand?`,
     ].join("\n");
   }
 
@@ -300,8 +359,8 @@ export function getStudentAnswerContext(state: Level1State, answer: string): str
     const correct = (dealerIsStrong && guessedStrong) || (!dealerIsStrong && guessedWeak);
     return [
       `[STAGE_3_ANSWER] Student classified dealer as: "${answer}". Correct: ${dealerIsStrong ? "STRONG (7-A)" : "WEAK (2-6)"}. Answer was ${correct ? "CORRECT" : "INCORRECT"}.`,
-      `Actual dealer bust probability: ${dealerBustPct}%.`,
-      `Task: Confirm or correct in 1 sentence. Reveal the dealer bust probability (${dealerBustPct}%). Explain in 1 sentence what this means for the player's decision.`,
+      `Actual dealer bust fraction: ${dealerBustFraction}.`,
+      `Task: Confirm or correct in 1 sentence. Reveal the dealer bust fraction (${dealerBustFraction}). Explain in 1 sentence what this means for the player's decision.`,
     ].join("\n");
   }
 
@@ -327,8 +386,8 @@ export function getStageIntroContext(stage: Level1Stage): string {
   const intros: Record<Level1Stage, string> = {
     0: [
       "[STAGE_INTRO] Stage 0: Blackjack Basics.",
-      "Teach these rules simply: number cards = face value, face cards (J/Q/K) = 10, Ace = 1 or 11. Goal: beat the dealer's total without going over 21 (busting). Player can Hit (take a card) or Stand (stop). The dealer shows one card face-up — use it as a clue.",
-      "3-4 warm sentences for a complete beginner. End by saying a hand is about to be dealt.",
+      "Teach these rules simply: number cards = face value, face cards (J/Q/K) = 10, Ace = 1 or 11. Goal: beat the dealer's total without going over 21 (busting). Player can Hit (take a card) or Stand (stop). The dealer shows one card face-up; use it as a clue.",
+      "Say that after each decision, the tutor will ask one question and the student must answer before the next hand. Do not ask what the student wants to do yet. 3-4 warm sentences for a complete beginner. End by saying a hand is about to be dealt.",
     ].join("\n"),
     1: [
       "[STAGE_INTRO] Stage 1: Your Hand vs. The Dealer.",
@@ -337,12 +396,12 @@ export function getStageIntroContext(stage: Level1Stage): string {
     ].join("\n"),
     2: [
       "[STAGE_INTRO] Stage 2: Bust Probability.",
-      "Introduce bust probability as a number. Key fact: 16 of 52 cards are 10-value (10, J, Q, K) — roughly 31% of the deck. This makes hitting on a stiff total (12-16) risky. Tell the student you will ask them to estimate their bust risk before revealing the exact number each round.",
+      "Introduce bust risk as a fraction of cards. Key fact: 16 out of 52 cards are 10-value (10, J, Q, K). This makes hitting on a stiff total (12-16) risky. Tell the student you will ask them to estimate their bust risk before revealing the exact fraction each round.",
       "3-4 sentences. Plain text only.",
     ].join("\n"),
     3: [
       "[STAGE_INTRO] Stage 3: Dealer Bust Probability.",
-      "Introduce: the dealer has a bust probability too. Weak dealer cards (2-6) force the dealer to keep drawing, giving them a 35-43% chance of busting. Sometimes the right move is to stand and let the dealer bust rather than risk busting yourself. Tell the student you will ask them to classify the dealer card each round before showing the exact probability.",
+      "Introduce: the dealer has a bust risk too. Weak dealer cards (2-6) force the dealer to keep drawing, giving them more bust cards out of 52 than strong dealer cards usually have. Sometimes the right move is to stand and let the dealer bust rather than risk busting yourself. Tell the student you will ask them to classify the dealer card each round before showing the fraction.",
       "3-4 sentences. Plain text only.",
     ].join("\n"),
     4: [
