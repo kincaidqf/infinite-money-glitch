@@ -534,7 +534,7 @@ export default function Level1Session({ level }: { level: Level }) {
                 </div>
               </>
             )}
-            {actionsEnabled && assumedDealerTotal !== null && (
+            {assumedDealerTotal !== null && (
               <>
                 <div className="game-hud__divider" />
                 <div className="game-hud__stat">
