@@ -22,6 +22,7 @@ import {
   formatCardFraction,
   getPlayerBustFraction,
   getHandFeedbackContext,
+  getHintContext,
   getFeedbackReflectionContext,
   getStageQuestionContext,
   getStudentAnswerContext,
@@ -42,7 +43,7 @@ let _msgId = 0;
 const nextMsgId = () => ++_msgId;
 
 function cleanTutorText(text: string): string {
-  const metadataLine = /^\s*(message_type|stage|student_goal|teaching_points|flow_note|forbidden|response_style|student_prompt|student_answer|student_question|decision_index|decision_result|student_action|level1_probability_action|level1_probability_action_hidden|opening_sentence|player_hand|player_total|player_bust_fraction_if_hit|player_bust_fraction_hidden|player_bust_category|player_bust_category_hidden|dealer_upcard|assumed_dealer_upcard|assumed_dealer_total|assumed_dealer_total_hidden|correct_assumed_dealer_total|correct_assumed_dealer_total_hidden|assumed_dealer_bust_fraction_if_forced_to_hit|assumed_dealer_bust_fraction_if_forced_to_hit_hidden|hand_outcome|session_accuracy|answer_result|estimate_result|comparison_hidden|correct_comparison|concept_covered|hands_played)\s*:/i;
+  const metadataLine = /^\s*(message_type|stage|student_goal|teaching_points|flow_note|forbidden|response_style|student_prompt|student_answer|student_question|decision_index|decision_result|student_action|level1_probability_action|level1_probability_action_hidden|opening_sentence|delivered_opening|must_use_reason|must_ask_question|case_type|player_hand|player_total|player_total_label|player_bust_fraction_if_hit|player_bust_fraction_hidden|player_bust_category|player_bust_category_hidden|dealer_upcard|assumed_dealer_upcard|assumed_dealer_total|assumed_dealer_total_hidden|correct_assumed_dealer_total|correct_assumed_dealer_total_hidden|assumed_dealer_bust_fraction_if_forced_to_hit|assumed_dealer_bust_fraction_if_forced_to_hit_hidden|hand_outcome|session_accuracy|answer_result|estimate_result|comparison_hidden|correct_comparison|concept_covered|hands_played)\s*:/i;
   const cleanedLines = text
     .trim()
     .split(/\r?\n/)
@@ -377,7 +378,7 @@ export default function Level1Session({ level }: { level: Level }) {
   }, []);
 
   const handleHint = useCallback(() => {
-    fireTutor("hint", getHandFeedbackContext(state));
+    fireTutor("hint", getHintContext(state));
   }, [fireTutor, state]);
 
   const handleStudentMessage = useCallback(
@@ -456,7 +457,7 @@ export default function Level1Session({ level }: { level: Level }) {
   const showDecisionBadge =
     firstDecision !== null &&
     (state.phase === "round-over" || state.phase === "tutor-feedback");
-  const allDecisionsCorrect = state.handDecisions.every(d => d.correct);
+  const allDecisionsCorrect = state.handDecisions.every(d => d.isCorrect);
 
   const stageLabel =
     state.stage === 0 ? "Stage 0 — Basics" :
