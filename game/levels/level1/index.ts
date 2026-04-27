@@ -15,7 +15,7 @@ const level1Module: LevelModule = {
     title: "Probability Basics",
     description:
       "Learn why 31% of cards are worth 10 points and how that single probability shapes every hit/stand decision.",
-    passCriteria: "5 consecutive correct probability-based hit/stand decisions in a row",
+    passCriteria: "Complete all five probability stages at your own pace",
   },
   tutorPrompts,
   LevelSession: Level1Session,

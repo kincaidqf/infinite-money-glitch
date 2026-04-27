@@ -34,21 +34,21 @@ const ACTIVE_PROVIDER = (process.env.LLM_PROVIDER || "ollama") as Provider;
 
 // ─── System Prompts ──────────────────────────────────────────────────────────
 
-const TUTOR_FEEDBACK_SYSTEM = `You are an expert Blackjack strategy tutor.
+const TUTOR_FEEDBACK_SYSTEM = `You are an expert Blackjack probability tutor.
 Role: Give constructive feedback on the player's most recent decision.
-Scope: Blackjack basic strategy and card counting only.
+Scope: Blackjack basic strategy and probability only.
 Format: 2-3 sentences, plain text, direct and encouraging.
 Constraint: Never give away future answers directly — guide with reasoning.`;
 
-const TUTOR_HINT_SYSTEM = `You are an expert Blackjack strategy tutor.
+const TUTOR_HINT_SYSTEM = `You are an expert Blackjack probability tutor.
 Role: Give a subtle hint to help the player decide their next move.
-Scope: Blackjack basic strategy and card counting only.
+Scope: Blackjack basic strategy and probability only.
 Format: 1-2 sentences, plain text.
 Constraint: Do not reveal the optimal play outright — prompt the player to reason.`;
 
-const TUTOR_EXPLANATION_SYSTEM = `You are an expert Blackjack strategy tutor.
+const TUTOR_EXPLANATION_SYSTEM = `You are an expert Blackjack probability tutor.
 Role: Explain a Blackjack concept or strategy rule clearly.
-Scope: Blackjack basic strategy, card counting, and probability only.
+Scope: Blackjack basic strategy and probability only.
 Format: 3-4 sentences, plain text, with a concrete example.
 Constraint: Stay on topic — no general gambling advice.`;
 
@@ -125,7 +125,7 @@ export async function getTutorFeedback(
 ): Promise<string> {
   try {
     return await callLLM(
-      `Game state: ${gameContext}\n\nGive feedback on the player's most recent decision.`,
+      `${gameContext}\n\nRespond to the tutoring request above.`,
       systemPrompt
     );
   } catch (err) {
@@ -140,7 +140,7 @@ export async function getTutorHint(
 ): Promise<string> {
   try {
     return await callLLM(
-      `Game state: ${gameContext}\n\nGive a hint to help the player decide their next move.`,
+      `${gameContext}\n\nRespond with a hint using the system instructions.`,
       systemPrompt
     );
   } catch (err) {
@@ -154,7 +154,7 @@ export async function getTutorExplanation(
   systemPrompt: string = TUTOR_EXPLANATION_SYSTEM
 ): Promise<string> {
   try {
-    return await callLLM(`Explain: ${topic}`, systemPrompt);
+    return await callLLM(`${topic}\n\nRespond to the tutoring request above.`, systemPrompt);
   } catch (err) {
     console.error("getTutorExplanation failed:", err);
     return "Explanation unavailable. Try again.";

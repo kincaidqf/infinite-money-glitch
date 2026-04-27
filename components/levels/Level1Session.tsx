@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import type { Level } from "@/lib/types";
 import type { Card } from "@/lib/cards";
 import { getCardImagePath, getBackImagePath, calculateHandValue } from "@/game/cardUtils";
@@ -9,28 +10,26 @@ import { useTutor } from "@/lib/useTutor";
 import {
   type Level1State,
   type Level1Stage,
-  STAGE2_HAND_COUNT,
-  STAGE4_HAND_COUNT,
-  STAGE5_BLOCK_SIZE,
-  WIN_STREAK,
-  TEN_VALUE_PROBABILITY,
+  type Level1Phase,
+  HANDS_PER_STAGE,
+  TEN_VALUE_CARD_COUNT,
   getInitialLevel1State,
   startNewHand,
   applyPlayerHit,
   applyPlayerStand,
+  applyPendingHitCard,
   runDealerPlay,
-  getLevel1GameContext,
+  formatCardFraction,
+  getPlayerBustFraction,
+  getHandFeedbackContext,
+  getHintContext,
+  getFeedbackReflectionContext,
+  getStageQuestionContext,
+  getStudentAnswerContext,
+  getStudentQuestionContext,
+  getStageAdvanceContext,
   getStageIntroContext,
-  isConsecutiveWin,
 } from "@/game/levels/level1/gameLogic";
-import {
-  computeBustQuizData,
-  evaluateStep1,
-  evaluateStep2,
-  getStage5QuizInitialContext,
-  getStage5QuizStep1EvalContext,
-  getStage5QuizStep2EvalContext,
-} from "@/game/levels/level1/quizLogic";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,6 +41,127 @@ interface ChatMessage {
 
 let _msgId = 0;
 const nextMsgId = () => ++_msgId;
+
+function cleanTutorText(text: string): string {
+  const metadataLine = /^\s*(message_type|stage|student_goal|teaching_points|flow_note|forbidden|response_style|student_prompt|student_answer|student_question|decision_index|decision_result|student_action|correct_action|is_correct|verdict_text|action_alignment|teaching_focus|level1_probability_action|level1_probability_action_hidden|opening_sentence|required_opening|delivered_opening|required_meaning|required_reason|must_use_reason|must_ask_question|reflection_question|key_fraction|key_fraction_label|key_fraction_meaning|locked_reason_fact_\d+|locked_fact_\d+|forbidden_claim_\d+|case_type|player_hand|player_total|player_total_label|player_bust_fraction_if_hit|player_bust_fraction_hidden|player_bust_category|player_bust_category_hidden|dealer_upcard|assumed_dealer_upcard|assumed_dealer_total|assumed_dealer_total_hidden|correct_assumed_dealer_total|correct_assumed_dealer_total_hidden|assumed_dealer_bust_fraction_if_forced_to_hit|assumed_dealer_bust_fraction_if_forced_to_hit_hidden|hand_outcome|session_accuracy|answer_result|estimate_result|comparison_hidden|correct_comparison|concept_covered|hands_played|allowed_message)\s*:/i;
+  const cleanedLines = text
+    .trim()
+    .split(/\r?\n/)
+    .map((line) =>
+      line
+        .replace(/^\s*(Explain|Game state|Tutor request|Task)\s*:\s*/i, "")
+        .replace(/^\s*\[[A-Z0-9_]+\]\s*/i, "")
+        .replace(/^\s*Stage\s+\d+\s*:\s*/i, "")
+        .replace(/^\s*(?:Sentence|Part)\s*\d+\s*[:\-–—]\s*/i, "")
+        .replace(/^\s*Response\s*[:\-–—]\s*/i, "")
+        .replace(/^\s*(?:first|second|third)\s*[:\-–—]\s*/i, "")
+        .trim()
+    )
+    .filter((line) => line && !metadataLine.test(line));
+
+  return cleanedLines.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function getContextValue(context: string, key: string): string | null {
+  const line = context.split(/\r?\n/).find((item) => item.toLowerCase().startsWith(`${key.toLowerCase()}:`));
+  return line ? line.slice(line.indexOf(":") + 1).trim() : null;
+}
+
+function getContextValues(context: string, keyPrefix: string): string[] {
+  const lowerPrefix = keyPrefix.toLowerCase();
+  return context
+    .split(/\r?\n/)
+    .filter((item) => item.toLowerCase().startsWith(lowerPrefix))
+    .map((item) => item.slice(item.indexOf(":") + 1).trim())
+    .filter(Boolean);
+}
+
+function joinTutorSentences(parts: Array<string | null | undefined>): string {
+  return parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildFallbackTutorText(context: string): string {
+  const messageType = getContextValue(context, "message_type");
+  const requiredMeaning = getContextValue(context, "required_meaning");
+  const reflectionQuestion = getContextValue(context, "reflection_question");
+  const allowedMessage = getContextValue(context, "allowed_message");
+  const keyFraction = getContextValue(context, "key_fraction");
+  const keyFractionMeaning = getContextValue(context, "key_fraction_meaning");
+  const teachingFocus = getContextValue(context, "teaching_focus");
+  const lockedFact = getContextValues(context, "locked_fact_")[0];
+  const studentAction = getContextValue(context, "student_action") as "hit" | "stand" | null;
+  const correctAction = getContextValue(context, "correct_action") as "hit" | "stand" | null;
+  const isCorrect = getContextValue(context, "is_correct") === "true";
+
+  if (messageType === "decision_feedback") {
+    let opening: string | null = null;
+    if (studentAction && correctAction) {
+      if (isCorrect && correctAction === "hit") {
+        opening = `That matches the Level 1 rule: you hit, and hit is the right call here.`;
+      } else if (isCorrect && correctAction === "stand") {
+        opening = `Good stop: you stood, and stand is what the Level 1 rule calls for here.`;
+      } else {
+        opening = `Not quite: you chose ${studentAction}, but the Level 1 rule calls for ${correctAction} here.`;
+      }
+    }
+    const explanation = keyFraction && keyFractionMeaning
+      ? `${requiredMeaning} ${keyFraction} matters here: ${keyFractionMeaning.toLowerCase()}`
+      : requiredMeaning ?? lockedFact ?? teachingFocus;
+    return joinTutorSentences([opening, explanation, reflectionQuestion]);
+  }
+
+  if (messageType === "feedback_reflection_answer") {
+    const explanation = keyFraction
+      ? `${requiredMeaning} The key fraction is ${keyFraction}.`
+      : requiredMeaning ?? lockedFact;
+    return joinTutorSentences(["That reasoning makes sense to look at.", explanation]);
+  }
+
+  if (messageType === "stage_advance") {
+    return allowedMessage ?? "Nice work practicing this concept. Type yes to move on, or more to keep practicing.";
+  }
+
+  return requiredMeaning ?? lockedFact ?? "Let's keep using the Level 1 probability rule from the board.";
+}
+
+function containsOppositeRecommendation(text: string, context: string): boolean {
+  const correctAction = getContextValue(context, "correct_action") ?? getContextValue(context, "level1_probability_action");
+  if (correctAction !== "hit" && correctAction !== "stand") return false;
+
+  const opposite = correctAction === "hit" ? "stand" : "hit";
+  const lower = text.toLowerCase();
+  const oppositePatterns = [
+    `rule says ${opposite}`,
+    `probability says ${opposite}`,
+    `should ${opposite}`,
+    `better to ${opposite}`,
+    `${opposite} was correct`,
+    `decision to ${opposite} was correct`,
+    `correct to ${opposite}`,
+    `marked ${opposite} as correct`,
+  ];
+
+  return oppositePatterns.some((pattern) => lower.includes(pattern));
+}
+
+function contradictsZeroBustRisk(text: string, context: string): boolean {
+  if (getContextValue(context, "player_bust_fraction_if_hit") !== "0 out of 52") return false;
+  const lower = text.toLowerCase();
+  const saysNoBust = /0 out of 52|cannot bust|can't bust|would not bust|wouldn't bust|no bust risk/.test(lower);
+  const saysCanBust = /would bust|could bust|can bust|might bust|will bust|bust if you hit|bust from one hit/.test(lower);
+  return saysCanBust && !saysNoBust;
+}
+
+function isUnsafeTutorText(text: string, context: string): boolean {
+  if (/%|\bpercent\b|zero percent/i.test(text)) return true;
+  if (containsOppositeRecommendation(text, context)) return true;
+  return contradictsZeroBustRisk(text, context);
+}
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
@@ -60,29 +180,22 @@ function EmptySlot() {
 }
 
 function TutorSidebar({
-  messages,
-  loading,
-  isForcedPhase,
-  stage,
-  acknowledgeLabel,
-  onAcknowledge,
-  canHint,
-  onHint,
-  onStudentMessage,
-  showContinue,
-  onContinue,
+  messages, loading, phase, stage,
+  onAcknowledge, onKeepPracticing, onAdvanceStage,
+  canHint, canContinueFeedback, feedbackContinueLabel, onHint, onStudentMessage,
 }: {
   messages: ChatMessage[];
   loading: boolean;
-  isForcedPhase: boolean;
+  phase: Level1Phase;
   stage: Level1Stage;
-  acknowledgeLabel: string;
   onAcknowledge: () => void;
+  onKeepPracticing: () => void;
+  onAdvanceStage: () => void;
   canHint: boolean;
+  canContinueFeedback: boolean;
+  feedbackContinueLabel: string;
   onHint: () => void;
   onStudentMessage: (q: string) => void;
-  showContinue?: boolean;
-  onContinue?: () => void;
 }) {
   const [input, setInput] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -97,6 +210,11 @@ function TutorSidebar({
     setInput("");
     onStudentMessage(q);
   };
+
+  const isIntro = phase === "tutor-intro";
+  const isAdvance = phase === "tutor-advance";
+  const isFeedback = phase === "tutor-feedback";
+  const isPlaying = phase === "player-turn";
 
   return (
     <aside className="tutor-panel">
@@ -126,114 +244,118 @@ function TutorSidebar({
         ))}
         {loading && (
           <div className="tutor-panel__message" style={{ color: "#64748b", fontStyle: "italic" }}>
-            Tutor is thinking…
+            Tutor is thinking...
           </div>
         )}
         <div ref={bottomRef} />
       </div>
 
-      {isForcedPhase ? (
-        <div style={{ padding: "0.75rem 1rem", borderTop: "1px solid #374151" }}>
-          <button
-            className="action-btn"
-            onClick={onAcknowledge}
-            disabled={loading || messages.length === 0}
-            style={{ width: "100%" }}
-          >
-            {acknowledgeLabel}
-          </button>
-        </div>
-      ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", borderTop: "1px solid #374151" }}>
-          {showContinue && (
-            <div style={{ padding: "0.75rem 1rem 0" }}>
-              <button
-                className="action-btn action-btn--deal"
-                onClick={onContinue}
-                disabled={loading}
-                style={{ width: "100%" }}
-              >
-                Continue
-              </button>
-            </div>
-          )}
-          {canHint && !showContinue && (
-            <div style={{ padding: "0.75rem 1rem 0" }}>
-              <button
-                className="action-btn"
-                onClick={onHint}
-                disabled={loading}
-                style={{ background: "#374151", color: "#e2e8f0", width: "100%" }}
-              >
-                Get Hint
-              </button>
-            </div>
-          )}
-          <div className="tutor-panel__input-row">
-            <input
-              className="tutor-panel__input"
-              placeholder={showContinue ? "Ask a follow-up question…" : "Ask a probability question…"}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSend()}
-              disabled={loading}
-            />
+      <div style={{ borderTop: "1px solid #374151" }}>
+        {isIntro && (
+          <div style={{ padding: "0.75rem 1rem" }}>
             <button
-              className="tutor-panel__send"
-              onClick={handleSend}
-              disabled={loading || !input.trim()}
+              className="action-btn"
+              onClick={onAcknowledge}
+              disabled={loading || messages.length === 0}
+              style={{ width: "100%" }}
             >
-              Ask
+              {stage === 0 ? "Let's Play" : "Got it — Let's Play"}
             </button>
           </div>
-        </div>
-      )}
+        )}
+
+        {isAdvance && (
+          <div style={{ padding: "0.75rem 1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            <button
+              className="action-btn action-btn--deal"
+              onClick={onAdvanceStage}
+              disabled={loading}
+              style={{ width: "100%" }}
+            >
+              I&apos;m Ready — Next Stage
+            </button>
+            <button
+              className="action-btn"
+              onClick={onKeepPracticing}
+              disabled={loading}
+              style={{ background: "#374151", color: "#e2e8f0", width: "100%" }}
+            >
+              Keep Practicing
+            </button>
+          </div>
+        )}
+
+        {isFeedback && (
+          <div style={{ padding: "0.75rem 1rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            <button
+              className="action-btn action-btn--deal"
+              onClick={onAcknowledge}
+              disabled={loading || !canContinueFeedback}
+              style={{ width: "100%" }}
+            >
+              {feedbackContinueLabel}
+            </button>
+            <div className="tutor-panel__input-row">
+              <input
+                className="tutor-panel__input"
+                placeholder="Answer the tutor's question..."
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                disabled={loading}
+              />
+              <button className="tutor-panel__send" onClick={handleSend} disabled={loading || !input.trim()}>
+                Send
+              </button>
+            </div>
+          </div>
+        )}
+
+        {isPlaying && (
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+            {canHint && (
+              <div style={{ padding: "0.75rem 1rem 0" }}>
+                <button
+                  className="action-btn"
+                  onClick={onHint}
+                  disabled={loading}
+                  style={{ background: "#374151", color: "#e2e8f0", width: "100%" }}
+                >
+                  Get Hint
+                </button>
+              </div>
+            )}
+            <div className="tutor-panel__input-row">
+              <input
+                className="tutor-panel__input"
+                placeholder="Answer the tutor or ask a question..."
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSend()}
+                disabled={loading}
+              />
+              <button className="tutor-panel__send" onClick={handleSend} disabled={loading || !input.trim()}>
+                Send
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </aside>
   );
 }
 
-// ─── Pure helper ──────────────────────────────────────────────────────────────
-
-function advanceAfterRound(s: Level1State): Level1State {
-  if (s.stage === 2) {
-    const handsAfter = s.stage2HandsPlayed + 1;
-    if (handsAfter >= STAGE2_HAND_COUNT) {
-      return { ...s, stage: 3, phase: "tutor-intro", stage2HandsPlayed: handsAfter };
-    }
-    return startNewHand({ ...s, stage2HandsPlayed: handsAfter });
-  }
-  if (s.stage === 4) return { ...s, phase: "tutor-feedback" };
-  if (s.stage === 5) {
-    // Wrong decision in Stage 5: interrupt with probability quiz
-    if (
-      s.lastDecisionCorrect === false &&
-      s.lastWrongDecision !== null &&
-      s.lastWrongDecisionTotal !== null &&
-      !(s.lastWrongDecision === "hit" && (s.lastWrongDecisionSoft ?? false))
-    ) {
-      const bustQuizData = computeBustQuizData(
-        s.lastWrongDecision,
-        s.lastWrongDecisionTotal,
-        s.lastWrongDecisionSoft ?? false,
-        s.dealerHand[0]?.rank ?? "?"
-      );
-      return { ...s, phase: "bust-quiz", bustQuizData, bustQuizStep: 1 };
-    }
-    const blockHandsAfter = s.stage5BlockHandsPlayed + 1;
-    if (blockHandsAfter >= STAGE5_BLOCK_SIZE) {
-      return { ...s, phase: "tutor-feedback", stage5BlockHandsPlayed: blockHandsAfter };
-    }
-    return startNewHand({ ...s, stage5BlockHandsPlayed: blockHandsAfter });
-  }
-  return s;
-}
-
 // ─── Main Component ───────────────────────────────────────────────────────────
 
-export default function Level1Session({ level: _level }: { level: Level }) {
+export default function Level1Session({ level }: { level: Level }) {
   const [state, setState] = useState<Level1State>(getInitialLevel1State);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [feedbackAnsweredDecisionKey, setFeedbackAnsweredDecisionKey] = useState<string | null>(null);
+  void level;
+
   const mountFiredRef = useRef(false);
+  const lastQuestionedHandRef = useRef(-1);
+  const lastAnsweredHandRef = useRef(-1);
 
   const { callTutor, loading: tutorLoading } = useTutor({
     onError: () =>
@@ -246,74 +368,112 @@ export default function Level1Session({ level: _level }: { level: Level }) {
   const fireTutor = useCallback(
     async (action: "feedback" | "hint" | "explain", context: string) => {
       const msg = await callTutor(action, context, 1);
-      if (msg) setMessages((prev) => [...prev, { id: nextMsgId(), role: "tutor", text: msg }]);
+      if (!msg) return;
+      const cleanMsg = msg ? cleanTutorText(msg) : "";
+      const safeMsg = cleanMsg && !isUnsafeTutorText(cleanMsg, context)
+        ? cleanMsg
+        : buildFallbackTutorText(context);
+      if (safeMsg) setMessages((prev) => [...prev, { id: nextMsgId(), role: "tutor", text: safeMsg }]);
     },
     [callTutor]
   );
 
-  // Stage 1: fire intro exactly once on mount
+  // Stage 0 intro on mount
   useEffect(() => {
     if (mountFiredRef.current) return;
     mountFiredRef.current = true;
-    fireTutor("explain", getStageIntroContext(1));
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fireTutor("explain", getStageIntroContext(0));
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Subsequent tutor-intro, tutor-feedback, and bust-quiz phases (stages 3+)
+  // Stage intro for stages 1-4 when entering tutor-intro
   useEffect(() => {
-    if (state.stage === 1) return;
-    if (state.phase === "tutor-intro") {
-      if (state.stage === 3) fireTutor("explain", getStageIntroContext(3));
-      else if (state.stage === 4 && !state.stage4IntroShown) fireTutor("explain", getStageIntroContext(4));
-    } else if (state.phase === "tutor-feedback") {
-      fireTutor("feedback", getLevel1GameContext(state));
-    } else if (state.phase === "bust-quiz" && state.bustQuizData) {
-      fireTutor("explain", getStage5QuizInitialContext(state.bustQuizData));
-    }
+    if (state.phase !== "tutor-intro" || state.stage === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fireTutor("explain", getStageIntroContext(state.stage));
   }, [state.stage, state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-run dealer turn
+  // Per-hand question for stages 1-3 when a new hand is dealt
   useEffect(() => {
-    if (state.phase !== "dealer-turn") return;
-    setState((s) => runDealerPlay(s));
-  }, [state.phase]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (state.phase !== "player-turn") return;
+    if (state.stage < 1 || state.stage > 3) return;
+    if (lastQuestionedHandRef.current === state.handId) return;
+    lastQuestionedHandRef.current = state.handId;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fireTutor("explain", getStageQuestionContext(state));
+  }, [state.handId, state.phase, state.stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Auto-advance from round-over in stages 4 and 5
+  // Tutor feedback after each player decision
   useEffect(() => {
-    if (state.phase !== "round-over" || (state.stage !== 4 && state.stage !== 5)) return;
-    const timer = setTimeout(() => {
-      setState((s) => (s.phase === "round-over" ? advanceAfterRound(s) : s));
-    }, 1200);
-    return () => clearTimeout(timer);
+    if (state.phase !== "tutor-feedback") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fireTutor("feedback", getHandFeedbackContext(state));
+  }, [state.phase, state.handId, state.pendingFeedbackDecisionIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stage advance check when entering tutor-advance
+  useEffect(() => {
+    if (state.phase !== "tutor-advance") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fireTutor("explain", getStageAdvanceContext(state));
   }, [state.phase, state.stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Action handlers ──────────────────────────────────────────────────────
+  // Auto-run dealer
+  useEffect(() => {
+    if (state.phase !== "dealer-turn") return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setState((s) => runDealerPlay(s));
+  }, [state.phase]);
+
+  // Auto-advance from round-over
+  useEffect(() => {
+    if (state.phase !== "round-over") return;
+    const timer = setTimeout(() => {
+      setState((s) => {
+        if (s.phase !== "round-over") return s;
+        const handsAfter = s.handsInStage + 1;
+        const base = { ...s, handsInStage: handsAfter };
+        return handsAfter >= HANDS_PER_STAGE
+          ? { ...base, phase: "tutor-advance" }
+          : startNewHand(base);
+      });
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, [state.phase, state.handId]);
+
+  // ── Action handlers ──────────────────────────────────────────────────────────
 
   const handleAcknowledge = useCallback(() => {
     setState((s) => {
-      if (s.phase === "tutor-intro") {
-        if (s.stage === 1) return startNewHand({ ...s, stage: 2 });
-        if (s.stage === 3) return { ...s, stage: 4, phase: "tutor-intro", stage4IntroShown: false };
-        if (s.stage === 4) return startNewHand({ ...s, stage4IntroShown: true });
-      }
+      if (s.phase === "tutor-intro") return startNewHand(s);
       if (s.phase === "tutor-feedback") {
-        if (s.stage === 4) {
-          const handsAfter = s.stage4HandsPlayed + 1;
-          if (handsAfter >= STAGE4_HAND_COUNT) {
-            return startNewHand({ ...s, stage: 5, stage4HandsPlayed: handsAfter, consecutiveCorrect: 0, stage5BlockHandsPlayed: 0 });
-          }
-          return startNewHand({ ...s, stage4HandsPlayed: handsAfter });
-        }
-        if (s.stage === 5) {
-          if (isConsecutiveWin(s.consecutiveCorrect)) {
-            return { ...s, phase: "session-over", sessionComplete: true };
-          }
-          return startNewHand({ ...s, consecutiveCorrect: 0, stage5BlockHandsPlayed: 0 });
-        }
-      }
-      if (s.phase === "bust-quiz") {
-        return startNewHand({ ...s, stage5BlockHandsPlayed: 0 });
+        const feedbackKey = `${s.handId}:${s.pendingFeedbackDecisionIndex ?? "none"}`;
+        if (s.handDecisions.length > 0 && feedbackAnsweredDecisionKey !== feedbackKey) return s;
+        if (!s.phaseAfterFeedback) return s;
+        const nextState = s.pendingHitCard ? applyPendingHitCard(s) : s;
+        return {
+          ...nextState,
+          phase: s.phaseAfterFeedback,
+          pendingFeedbackDecisionIndex: null,
+          phaseAfterFeedback: null,
+        };
       }
       return s;
+    });
+  }, [feedbackAnsweredDecisionKey]);
+
+  const handleAdvanceStage = useCallback(() => {
+    setState((s) => {
+      if (s.phase !== "tutor-advance") return s;
+      if (s.stage === 4) return { ...s, phase: "session-over", sessionComplete: true };
+      const nextStage = (s.stage + 1) as Level1Stage;
+      return { ...s, stage: nextStage, phase: "tutor-intro", handsInStage: 0 };
+    });
+  }, []);
+
+  const handleKeepPracticing = useCallback(() => {
+    setState((s) => {
+      if (s.phase !== "tutor-advance") return s;
+      return startNewHand({ ...s, handsInStage: 0 });
     });
   }, []);
 
@@ -325,76 +485,96 @@ export default function Level1Session({ level: _level }: { level: Level }) {
     setState((s) => (s.phase === "player-turn" ? applyPlayerStand(s) : s));
   }, []);
 
-  const handleNextHand = useCallback(() => {
-    setState((s) => (s.phase === "round-over" ? advanceAfterRound(s) : s));
-  }, []);
-
   const handleHint = useCallback(() => {
-    fireTutor("hint", getLevel1GameContext(state));
+    fireTutor("hint", getHintContext(state));
   }, [fireTutor, state]);
 
   const handleStudentMessage = useCallback(
     async (question: string) => {
       setMessages((prev) => [...prev, { id: nextMsgId(), role: "student", text: question }]);
-      if (state.phase === "bust-quiz" && state.bustQuizData) {
-        const step = state.bustQuizStep;
-        if (step === 1) {
-          const { correct, hint } = evaluateStep1(state.bustQuizData, question);
-          if (correct) setState((s) => ({ ...s, bustQuizStep: 2 as const }));
-          await fireTutor("explain", getStage5QuizStep1EvalContext(state.bustQuizData, question, correct, hint));
-        } else if (step === 2) {
-          const { correct, hint } = evaluateStep2(state.bustQuizData, question);
-          if (correct) setState((s) => ({ ...s, bustQuizStep: 3 as const }));
-          await fireTutor("explain", getStage5QuizStep2EvalContext(state.bustQuizData, question, correct, hint));
-        } else {
-          await fireTutor("explain", `Student follow-up after quiz: "${question}"\n\n${getLevel1GameContext(state)}`);
-        }
-      } else {
-        await fireTutor("explain", `Student question: "${question}"\n\n${getLevel1GameContext(state)}`);
+
+      if (state.phase === "tutor-advance") {
+        const lower = question.toLowerCase();
+        const wantsAdvance = lower.includes("yes") || lower.includes("ready") || lower.includes("next") || lower.includes("move");
+        if (wantsAdvance) handleAdvanceStage();
+        else handleKeepPracticing();
+        return;
       }
+
+      if (state.phase === "tutor-feedback") {
+        const looksLikeQuestion =
+          /\?$/.test(question.trim()) ||
+          /^(why|how|what|when|where|who|which|is|are|do|does|can|could|should|would|will)\b/i.test(question.trim());
+        if (looksLikeQuestion) {
+          await fireTutor("explain", getStudentQuestionContext(state, question));
+          return;
+        }
+        setFeedbackAnsweredDecisionKey(`${state.handId}:${state.pendingFeedbackDecisionIndex ?? "none"}`);
+        await fireTutor("explain", getFeedbackReflectionContext(state, question));
+        return;
+      }
+
+      if (state.phase === "player-turn" && state.stage >= 1 && state.stage <= 3) {
+        if (lastAnsweredHandRef.current !== state.handId) {
+          lastAnsweredHandRef.current = state.handId;
+          await fireTutor("explain", getStudentAnswerContext(state, question));
+          return;
+        }
+      }
+
+      await fireTutor("explain", getStudentQuestionContext(state, question));
     },
-    [fireTutor, state]
+    [fireTutor, state, handleAdvanceStage, handleKeepPracticing]
   );
 
-  // ── Derived values ────────────────────────────────────────────────────────
+  // ── Derived values ───────────────────────────────────────────────────────────
 
   const playerTotal = state.playerHand.length > 0 ? calculateHandValue(state.playerHand) : null;
   const dealerReveal =
     state.phase === "round-over" ||
-    state.phase === "dealer-turn" ||
-    state.phase === "tutor-feedback";
+    state.phase === "dealer-turn";
   const dealerTotal =
     dealerReveal && state.dealerHand.length > 0 ? calculateHandValue(state.dealerHand) : null;
-  const isForcedPhase = state.phase === "tutor-intro" || state.phase === "tutor-feedback";
-  const showQuizContinue = state.phase === "bust-quiz" && state.bustQuizStep === 3;
   const actionsEnabled = state.phase === "player-turn";
-  const showStreak = state.stage === 5;
-  const tenPct = `${Math.round(TEN_VALUE_PROBABILITY * 100)}%`;
-  const playerBustPct =
-    state.playerBustProbability !== null
-      ? `${Math.round(state.playerBustProbability * 100)}%`
+  const tenFraction = formatCardFraction(TEN_VALUE_CARD_COUNT);
+  const handInProgress =
+    state.playerHand.length > 0 &&
+    (state.phase === "player-turn" || state.phase === "tutor-feedback" || state.phase === "dealer-turn");
+  const playerBustFraction =
+    state.playerHand.length > 0 && state.playerBustProbability !== null
+      ? getPlayerBustFraction(state.playerHand)
       : null;
-  const dealerBustPct =
-    state.dealerBustProbability !== null
-      ? `${Math.round(state.dealerBustProbability * 100)}%`
+  const assumedDealerTotal =
+    state.assumedDealerTotal !== null && handInProgress
+      ? state.assumedDealerTotal
       : null;
-
-  const stageLabel =
-    state.stage === 1 ? "Stage 1 — Intro" :
-    state.stage === 2 ? "Stage 2 — Free Play" :
-    state.stage === 3 ? "Stage 3 — Strategy" :
-    state.stage === 4 ? "Stage 4 — Guided" :
-    "Stage 5 — Free Play";
-
-  const acknowledgeLabel =
-    state.phase === "tutor-intro" && state.stage === 1 ? "Let's Play" : "Got it";
+  const feedbackRequiresAnswer = state.phase === "tutor-feedback" && state.handDecisions.length > 0;
+  const currentFeedbackDecisionKey =
+    state.pendingFeedbackDecisionIndex !== null ? `${state.handId}:${state.pendingFeedbackDecisionIndex}` : null;
+  const canContinueFeedback =
+    !feedbackRequiresAnswer ||
+    (currentFeedbackDecisionKey !== null && feedbackAnsweredDecisionKey === currentFeedbackDecisionKey);
+  const feedbackContinueLabel = state.phase === "tutor-feedback" ? "Continue" : "Next Hand";
 
   const outcomeLabel =
     state.lastOutcome === "win" ? "You win!" :
     state.lastOutcome === "loss" ? "Dealer wins." :
     state.lastOutcome === "push" ? "Push." : null;
 
-  // ── Session over ──────────────────────────────────────────────────────────
+  const firstDecision = state.handDecisions[0] ?? null;
+  const showDecisionBadge =
+    firstDecision !== null &&
+    (state.phase === "round-over" || state.phase === "tutor-feedback");
+  const allDecisionsCorrect = state.handDecisions.every(d => d.isCorrect);
+
+  const stageLabel =
+    state.stage === 0 ? "Stage 0 — Basics" :
+    state.stage === 1 ? "Stage 1 — Assume 10" :
+    state.stage === 2 ? "Stage 2 — Compare Totals" :
+    state.stage === 3 ? "Stage 3 — Gap and Risk" :
+    "Stage 4 — Decision Quality";
+
+  // ── Session over ─────────────────────────────────────────────────────────────
 
   if (state.phase === "session-over") {
     return (
@@ -413,31 +593,30 @@ export default function Level1Session({ level: _level }: { level: Level }) {
             Level 1 Complete!
           </h2>
           <p style={{ color: "#94a3b8", lineHeight: 1.6 }}>
-            You made {WIN_STREAK} consecutive correct probability-based decisions.
-            You understand how the 31% ten-value rate shapes every hit/stand choice.
+            You worked through all five stages: blackjack basics, the assume-10 rule, comparing totals,
+            gap and risk, and decision quality over outcomes.
           </p>
           <div style={{
             background: "#14532d", color: "#4ade80",
             borderRadius: "0.5rem", padding: "0.75rem", fontWeight: 600,
           }}>
-            Streak: {WIN_STREAK} / {WIN_STREAK} ✓
+            Accuracy: {state.correctDecisions} / {state.totalDecisions} correct decisions
           </div>
-          <a href="/" className="action-btn" style={{ textAlign: "center", textDecoration: "none" }}>
+          <Link href="/" className="action-btn" style={{ textAlign: "center", textDecoration: "none" }}>
             Back to Levels
-          </a>
+          </Link>
         </div>
       </div>
     );
   }
 
-  // ── Main game layout ──────────────────────────────────────────────────────
+  // ── Main layout ──────────────────────────────────────────────────────────────
 
   return (
     <div className="game-layout">
-
       <div className="game-board">
 
-        {/* Top-left: Stage + probability stats */}
+        {/* HUD — top left */}
         <div className="floor-tl">
           <div className="game-hud">
             <div className="game-hud__stat">
@@ -446,10 +625,10 @@ export default function Level1Session({ level: _level }: { level: Level }) {
             </div>
             <div className="game-hud__divider" />
             <div className="game-hud__stat">
-              <span className="game-hud__label">P(Ten-Value)</span>
-              <span className="game-hud__value game-hud__value--pos">{tenPct}</span>
+              <span className="game-hud__label">Ten-Value Cards</span>
+              <span className="game-hud__value game-hud__value--pos">{tenFraction}</span>
             </div>
-            {actionsEnabled && playerBustPct !== null && (
+            {actionsEnabled && playerBustFraction !== null && (
               <>
                 <div className="game-hud__divider" />
                 <div className="game-hud__stat">
@@ -459,24 +638,24 @@ export default function Level1Session({ level: _level }: { level: Level }) {
                       ? "game-hud__value--neg"
                       : "game-hud__value--pos"
                   }`}>
-                    {playerBustPct}
+                    {playerBustFraction}
                   </span>
                 </div>
               </>
             )}
-            {actionsEnabled && dealerBustPct !== null && (
+            {assumedDealerTotal !== null && (
               <>
                 <div className="game-hud__divider" />
                 <div className="game-hud__stat">
-                  <span className="game-hud__label">Dealer Bust</span>
-                  <span className="game-hud__value game-hud__value--pos">{dealerBustPct}</span>
+                  <span className="game-hud__label">Assumed Dealer</span>
+                  <span className="game-hud__value game-hud__value--pos">{assumedDealerTotal}</span>
                 </div>
               </>
             )}
           </div>
         </div>
 
-        {/* Top-right: W/L + streak counter */}
+        {/* Session record — top right */}
         <div className="floor-tr" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: "0.4rem" }}>
           <div className="session-record">
             <span className="session-record__label">Session</span>
@@ -486,18 +665,14 @@ export default function Level1Session({ level: _level }: { level: Level }) {
               <span className="session-record__losses">L: {state.sessionLosses}</span>
             </span>
           </div>
-          {showStreak && (
-            <div className="session-record" style={{ alignItems: "flex-end" }}>
-              <span className="session-record__label">Streak</span>
-              <span className="session-record__wl" style={{ fontSize: "0.9375rem" }}>
-                <span style={{ color: state.consecutiveCorrect > 0 ? "#4ade80" : "rgba(255,255,255,0.6)" }}>
-                  {state.consecutiveCorrect}
-                </span>
-                <span className="session-record__sep"> / </span>
-                <span style={{ color: "rgba(255,255,255,0.6)" }}>{WIN_STREAK}</span>
-              </span>
-            </div>
-          )}
+          <div className="session-record">
+            <span className="session-record__label">Accuracy</span>
+            <span className="session-record__wl">
+              <span style={{ color: "#4ade80" }}>{state.correctDecisions}</span>
+              <span className="session-record__sep"> / </span>
+              <span style={{ color: "rgba(255,255,255,0.6)" }}>{state.totalDecisions}</span>
+            </span>
+          </div>
         </div>
 
         {/* Felt table */}
@@ -547,17 +722,16 @@ export default function Level1Session({ level: _level }: { level: Level }) {
           )}
         </div>
 
-        {/* Decision correctness badge */}
-        {state.lastDecisionCorrect !== null &&
-          (state.phase === "round-over" || state.phase === "tutor-feedback") && (
+        {/* Decision badge */}
+        {showDecisionBadge && (
           <div className={`decision-feedback ${
-            state.lastDecisionCorrect ? "decision-feedback--correct" : "decision-feedback--incorrect"
+            allDecisionsCorrect ? "decision-feedback--correct" : "decision-feedback--incorrect"
           }`}>
-            {state.lastDecisionCorrect ? "✓ Correct decision" : "✗ Incorrect decision"}
+            {allDecisionsCorrect ? "Decision correct" : "See tutor for feedback"}
           </div>
         )}
 
-        {/* Bottom-left: Hit / Stand (disabled during forced tutor phases) */}
+        {/* Hit / Stand */}
         <div className="floor-bl">
           <button className="action-btn" onClick={handleHit} disabled={!actionsEnabled}>
             Hit
@@ -566,29 +740,21 @@ export default function Level1Session({ level: _level }: { level: Level }) {
             Stand
           </button>
         </div>
-
-        {/* Bottom-right: Next Hand button (Stage 2 only) */}
-        {state.stage === 2 && state.phase === "round-over" && (
-          <div className="floor-br">
-            <button className="action-btn action-btn--deal" onClick={handleNextHand}>
-              {state.stage2HandsPlayed + 1 >= STAGE2_HAND_COUNT ? "Continue" : "Next Hand"}
-            </button>
-          </div>
-        )}
       </div>
 
       <TutorSidebar
         messages={messages}
         loading={tutorLoading}
-        isForcedPhase={isForcedPhase}
+        phase={state.phase}
         stage={state.stage}
-        acknowledgeLabel={acknowledgeLabel}
         onAcknowledge={handleAcknowledge}
+        onKeepPracticing={handleKeepPracticing}
+        onAdvanceStage={handleAdvanceStage}
         canHint={actionsEnabled}
+        canContinueFeedback={canContinueFeedback}
+        feedbackContinueLabel={feedbackContinueLabel}
         onHint={handleHint}
         onStudentMessage={handleStudentMessage}
-        showContinue={showQuizContinue}
-        onContinue={handleAcknowledge}
       />
     </div>
   );
