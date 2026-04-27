@@ -16,7 +16,16 @@ export type Level1ResumePhase = "player-turn" | "dealer-turn" | "round-over";
 export type Level1CaseType =
   | "dealer_bust_risk"
   | "dealer_bust_risk_exception"
-  | "dealer_strong";
+  | "dealer_strong_hit"
+  | "dealer_strong_stand";
+
+export type Level1TutorMessageType =
+  | "decision_feedback"
+  | "feedback_reflection_answer"
+  | "hint"
+  | "stage_advance";
+
+export type Level1KeyFractionLabel = "player_bust" | "dealer_assumed_bust" | "no_bust_risk";
 
 export const HANDS_PER_STAGE = 5;
 export const STANDARD_DECK_SIZE = 52;
@@ -33,10 +42,34 @@ export interface Level1DecisionReview {
   dealerUpcardCard: Card | null;
   assumedDealerTotal: number;
   caseType: Level1CaseType;
+  keyFractionLabel: Level1KeyFractionLabel;
+  keyFraction: string;
+  keyFractionMeaning: string;
+  lockedRuleMeaning: string;
+  lockedReasonFacts: string[];
+  forbiddenClaims: string[];
   playerBustFraction: string;
   assumedDealerBustFraction: string;
   openingSentence: string;
   reasonSentence: string;
+  reflectionQuestion: string;
+}
+
+export interface Level1TutorPacket {
+  messageType: Level1TutorMessageType;
+  studentAction: "hit" | "stand";
+  correctAction: "hit" | "stand";
+  isCorrect: boolean;
+  verdictText: "Correct" | "Not quite";
+  playerTotalLabel: string;
+  dealerUpcard: string;
+  assumedDealerTotal: number;
+  caseType: Level1CaseType;
+  keyFractionLabel: Level1KeyFractionLabel;
+  keyFraction: string;
+  lockedRuleMeaning: string;
+  lockedReasonFacts: string[];
+  forbiddenClaims: string[];
   reflectionQuestion: string;
 }
 
@@ -158,12 +191,12 @@ export function getLevel1ProbabilityAction(playerHand: Card[], dealerUpcard: Car
 }
 
 export function getCaseType(playerHand: Card[], assumedDealerTotal: number): Level1CaseType {
+  const total = calculateHandValue(playerHand);
   if (assumedDealerTotal <= 16) {
-    const total = calculateHandValue(playerHand);
     const soft = isSoft(playerHand);
     return !soft && total <= 11 ? "dealer_bust_risk_exception" : "dealer_bust_risk";
   }
-  return "dealer_strong";
+  return total < 17 ? "dealer_strong_hit" : "dealer_strong_stand";
 }
 
 function buildPlayerTotalLabel(hand: Card[]): string {
@@ -201,17 +234,93 @@ function buildReasonSentence(
       `so the rule lets you take one safe card even though the dealer is assumed at ${assumedDealerTotal}.`
     );
   }
+  if (caseType === "dealer_strong_hit") {
+    return (
+      `The dealer shows ${dealerUpcard}, so we assume ${assumedDealerTotal}; ` +
+      `your ${playerTotalLabel} is below 17, so the rule says hit to improve, ` +
+      `even though ${playerBustFraction} cards would bust you if you hit.`
+    );
+  }
   return (
     `The dealer shows ${dealerUpcard}, so we assume ${assumedDealerTotal}; ` +
-    `your ${playerTotalLabel} is below that strong assumed total, ` +
-    `and ${playerBustFraction} cards would bust you if you hit.`
+    `your ${playerTotalLabel} is already 17 or higher, so the rule says stand, ` +
+    `because hitting would risk ${playerBustFraction} bust cards.`
   );
 }
 
 function buildReflectionQuestion(caseType: Level1CaseType): string {
   if (caseType === "dealer_bust_risk") return "What made you decide to stand?";
   if (caseType === "dealer_bust_risk_exception") return "Why is it safe to hit here even though the dealer looks weak?";
+  if (caseType === "dealer_strong_stand") return "What helped you decide to stop here?";
   return "What were you thinking about when you made that call?";
+}
+
+function getKeyFractionLabel(caseType: Level1CaseType): Level1KeyFractionLabel {
+  if (caseType === "dealer_bust_risk") return "dealer_assumed_bust";
+  if (caseType === "dealer_bust_risk_exception") return "no_bust_risk";
+  return "player_bust";
+}
+
+function getKeyFractionMeaning(label: Level1KeyFractionLabel): string {
+  if (label === "dealer_assumed_bust") return "This is the dealer's bust risk if forced to hit from the assumed total.";
+  if (label === "no_bust_risk") return "This is the player's bust risk from one safe hit.";
+  return "This is the player's bust risk if they hit.";
+}
+
+function buildLockedRuleMeaning(
+  caseType: Level1CaseType,
+  playerTotalLabel: string,
+  assumedDealerTotal: number
+): string {
+  if (caseType === "dealer_bust_risk") {
+    return "The dealer is assumed below 17, so the Level 1 rule says stand and let the dealer take the next-card risk.";
+  }
+  if (caseType === "dealer_bust_risk_exception") {
+    return `The dealer is assumed below 17, but ${playerTotalLabel} cannot bust from one hit, so the Level 1 rule says hit.`;
+  }
+  if (caseType === "dealer_strong_hit") {
+    return "The dealer is assumed strong, and the player total is below 17, so the Level 1 rule says hit to improve.";
+  }
+  return `The dealer is assumed at ${assumedDealerTotal}, but the player already has 17 or higher, so the Level 1 rule says stand.`;
+}
+
+function buildLockedReasonFacts(
+  caseType: Level1CaseType,
+  playerTotalLabel: string,
+  dealerUpcard: string,
+  assumedDealerTotal: number,
+  keyFraction: string,
+  keyFractionMeaning: string
+): string[] {
+  const facts = [
+    `Dealer upcard ${dealerUpcard} creates assumed dealer total ${assumedDealerTotal}.`,
+    `Player total is ${playerTotalLabel}.`,
+    `${keyFraction} - ${keyFractionMeaning}`,
+  ];
+  if (caseType === "dealer_strong_stand") {
+    facts.push("Do not require the player to beat the assumed dealer total exactly; Level 1 stops at 17 or higher.");
+  }
+  return facts;
+}
+
+function buildForbiddenClaims(caseType: Level1CaseType, correctAction: "hit" | "stand", playerBustFraction: string): string[] {
+  const oppositeAction = correctAction === "hit" ? "stand" : "hit";
+  const claims = [
+    `Do not say the player should ${oppositeAction}.`,
+    "Do not say the player must beat the assumed dealer total exactly.",
+    "Do not use percentages or rate notation.",
+    "Do not invent a different fraction.",
+  ];
+  if (playerBustFraction === "0 out of 52") {
+    claims.push("Do not say the player can bust from one hit.");
+  }
+  if (caseType === "dealer_bust_risk_exception") {
+    claims.push("Do not use stand-and-let-the-dealer-bust framing for this exception case.");
+  }
+  if (caseType === "dealer_strong_stand") {
+    claims.push("Do not say standing is correct only because bust risk is high.");
+  }
+  return claims;
 }
 
 export function getInitialLevel1State(): Level1State {
@@ -289,6 +398,19 @@ function recordDecision(state: Level1State, action: "hit" | "stand"): Partial<Le
   const caseType = getCaseType(state.playerHand, assumedDealerTotal);
   const playerTotalLabel = buildPlayerTotalLabel(state.playerHand);
   const dealerUpcardRank = dealerUpcard?.rank ?? "?";
+  const keyFractionLabel = getKeyFractionLabel(caseType);
+  const keyFraction = keyFractionLabel === "dealer_assumed_bust" ? assumedDealerBustFraction : playerBustFraction;
+  const keyFractionMeaning = getKeyFractionMeaning(keyFractionLabel);
+  const lockedRuleMeaning = buildLockedRuleMeaning(caseType, playerTotalLabel, assumedDealerTotal);
+  const lockedReasonFacts = buildLockedReasonFacts(
+    caseType,
+    playerTotalLabel,
+    dealerUpcardRank,
+    assumedDealerTotal,
+    keyFraction,
+    keyFractionMeaning
+  );
+  const forbiddenClaims = buildForbiddenClaims(caseType, correctAction, playerBustFraction);
 
   const review: Level1DecisionReview = {
     decisionIndex,
@@ -301,6 +423,12 @@ function recordDecision(state: Level1State, action: "hit" | "stand"): Partial<Le
     dealerUpcardCard: dealerUpcard ?? null,
     assumedDealerTotal,
     caseType,
+    keyFractionLabel,
+    keyFraction,
+    keyFractionMeaning,
+    lockedRuleMeaning,
+    lockedReasonFacts,
+    forbiddenClaims,
     playerBustFraction,
     assumedDealerBustFraction,
     openingSentence: buildOpeningSentence(action, correctAction, isCorrect),
@@ -406,21 +534,58 @@ function getReviewedDecision(state: Level1State): Level1DecisionReview | undefin
   return state.handDecisions.at(-1);
 }
 
+function buildTutorPacket(messageType: Level1TutorMessageType, d: Level1DecisionReview): Level1TutorPacket {
+  return {
+    messageType,
+    studentAction: d.studentAction,
+    correctAction: d.correctAction,
+    isCorrect: d.isCorrect,
+    verdictText: d.isCorrect ? "Correct" : "Not quite",
+    playerTotalLabel: d.playerTotalLabel,
+    dealerUpcard: d.dealerUpcard,
+    assumedDealerTotal: d.assumedDealerTotal,
+    caseType: d.caseType,
+    keyFractionLabel: d.keyFractionLabel,
+    keyFraction: d.keyFraction,
+    lockedRuleMeaning: d.lockedRuleMeaning,
+    lockedReasonFacts: d.lockedReasonFacts,
+    forbiddenClaims: d.forbiddenClaims,
+    reflectionQuestion: d.reflectionQuestion,
+  };
+}
+
+function packetToLines(packet: Level1TutorPacket): string[] {
+  return [
+    `message_type: ${packet.messageType}`,
+    `student_action: ${packet.studentAction}`,
+    `correct_action: ${packet.correctAction}`,
+    `is_correct: ${packet.isCorrect}`,
+    `verdict_text: ${packet.verdictText}`,
+    `case_type: ${packet.caseType}`,
+    `player_total_label: ${packet.playerTotalLabel}`,
+    `dealer_upcard: ${packet.dealerUpcard}`,
+    `assumed_dealer_total: ${packet.assumedDealerTotal}`,
+    `key_fraction_label: ${packet.keyFractionLabel}`,
+    `key_fraction: ${packet.keyFraction}`,
+    `required_meaning: ${packet.lockedRuleMeaning}`,
+    ...packet.lockedReasonFacts.map((fact, index) => `locked_reason_fact_${index + 1}: ${fact}`),
+    ...packet.forbiddenClaims.map((claim, index) => `forbidden_claim_${index + 1}: ${claim}`),
+    `reflection_question: ${packet.reflectionQuestion}`,
+  ];
+}
+
 export function getHandFeedbackContext(state: Level1State): string {
   const d = getReviewedDecision(state);
   if (!d) return "message_type: decision_feedback\nno_decision: true";
+  const packet = buildTutorPacket("decision_feedback", d);
 
   return [
-    "message_type: decision_feedback",
-    `delivered_opening: ${d.openingSentence}`,
-    `case_type: ${d.caseType}`,
-    `must_use_reason: ${d.reasonSentence}`,
-    `must_ask_question: ${d.reflectionQuestion}`,
-    `player_total_label: ${d.playerTotalLabel}`,
-    `dealer_upcard: ${d.dealerUpcard}`,
-    `assumed_dealer_total: ${d.assumedDealerTotal}`,
+    ...packetToLines(packet),
+    `required_opening: ${d.openingSentence}`,
+    `required_reason: ${d.reasonSentence}`,
     `player_bust_fraction_if_hit: ${d.playerBustFraction}`,
     `assumed_dealer_bust_fraction_if_forced_to_hit: ${d.assumedDealerBustFraction}`,
+    `key_fraction_meaning: ${d.keyFractionMeaning}`,
   ].join("\n");
 }
 
@@ -431,12 +596,21 @@ export function getHintContext(state: Level1State): string {
   const level1ProbabilityAction = upcard ? getLevel1ProbabilityAction(state.playerHand, upcard) : "stand";
   const playerBustFraction = getPlayerBustFraction(state.playerHand);
   const assumedDealerBustFraction = getAssumedDealerBustFraction(assumedDealerTotal);
+  const keyFractionLabel = getKeyFractionLabel(caseType);
+  const keyFraction = keyFractionLabel === "dealer_assumed_bust" ? assumedDealerBustFraction : playerBustFraction;
+  const keyFractionMeaning = getKeyFractionMeaning(keyFractionLabel);
+  const playerTotalLabel = buildPlayerTotalLabel(state.playerHand);
 
   return [
     "message_type: hint",
     `assumed_dealer_total: ${assumedDealerTotal}`,
     `case_type: ${caseType}`,
+    `player_total_label: ${playerTotalLabel}`,
     `level1_probability_action: ${level1ProbabilityAction}`,
+    `required_meaning: ${buildLockedRuleMeaning(caseType, playerTotalLabel, assumedDealerTotal)}`,
+    `key_fraction_label: ${keyFractionLabel}`,
+    `key_fraction: ${keyFraction}`,
+    `key_fraction_meaning: ${keyFractionMeaning}`,
     `player_bust_fraction_if_hit: ${playerBustFraction}`,
     `assumed_dealer_bust_fraction_if_forced_to_hit: ${assumedDealerBustFraction}`,
   ].join("\n");
@@ -590,17 +764,16 @@ export function getFeedbackReflectionContext(state: Level1State, answer: string)
       "response_style: acknowledge briefly in 2 sentences; no follow-up question",
     ].join("\n");
   }
+  const packet = buildTutorPacket("feedback_reflection_answer", d);
 
   return [
-    "message_type: feedback_reflection_answer",
+    ...packetToLines(packet),
     `student_answer: ${JSON.stringify(answer)}`,
-    `case_type: ${d.caseType}`,
-    `must_use_reason: ${d.reasonSentence}`,
-    `player_total_label: ${d.playerTotalLabel}`,
-    `dealer_upcard: ${d.dealerUpcard}`,
-    `assumed_dealer_total: ${d.assumedDealerTotal}`,
+    `required_opening: ${d.openingSentence}`,
+    `required_reason: ${d.reasonSentence}`,
     `player_bust_fraction_if_hit: ${d.playerBustFraction}`,
     `assumed_dealer_bust_fraction_if_forced_to_hit: ${d.assumedDealerBustFraction}`,
+    `key_fraction_meaning: ${d.keyFractionMeaning}`,
   ].join("\n");
 }
 
@@ -612,6 +785,9 @@ export function getStudentQuestionContext(state: Level1State, question: string):
     `dealer_upcard: ${d.dealerUpcard}`,
     `assumed_dealer_total: ${d.assumedDealerTotal}`,
     `level1_probability_action: ${d.correctAction}`,
+    `required_meaning: ${d.lockedRuleMeaning}`,
+    `key_fraction: ${d.keyFraction}`,
+    `key_fraction_meaning: ${d.keyFractionMeaning}`,
     `player_bust_fraction_if_hit: ${d.playerBustFraction}`,
     `assumed_dealer_bust_fraction_if_forced_to_hit: ${d.assumedDealerBustFraction}`,
   ] : [];
@@ -636,9 +812,11 @@ export function getStageAdvanceContext(state: Level1State): string {
     "message_type: stage_advance",
     `stage: ${state.stage}`,
     `hands_played: ${state.handsInStage}`,
-    `session_accuracy: ${state.correctDecisions}/${state.totalDecisions}`,
     `concept_covered: ${concepts[state.stage]}`,
-    "response_style: acknowledge progress in 1 sentence, then say: Type yes to move on, or more to keep practicing.",
+    "allowed_message: Nice work practicing this concept. Type yes to move on, or more to keep practicing.",
+    "forbidden_claim_1: Do not mention a hand, action, dealer card, bust risk, or decision result.",
+    "forbidden_claim_2: Do not mention percentages or fractions.",
+    "response_style: acknowledge progress in 1 sentence, then say exactly: Type yes to move on, or more to keep practicing.",
   ].join("\n");
 }
 

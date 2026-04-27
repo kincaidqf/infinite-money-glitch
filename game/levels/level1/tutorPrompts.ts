@@ -8,17 +8,20 @@ SCOPE:
 Level 1 teaches Hit, Stand, the assume-10 dealer rule, and fraction-based bust risk. Correctness, case type, and all fractions are already computed by the app. Treat them as absolute.
 
 FORMAT:
-The opening sentence has already been delivered (delivered_opening). Do not repeat or rephrase it.
-Write exactly two sentences:
-  Sentence 1 — use must_use_reason exactly or rephrase lightly without changing the action, numbers, or case type.
-  Sentence 2 — ask must_ask_question exactly.
+Write exactly three short sentences:
+  Sentence 1 — preserve required_opening exactly in meaning, including verdict, student_action, and correct_action.
+  Sentence 2 — preserve required_meaning and required_reason exactly in meaning, but choose natural wording.
+  Sentence 3 — ask reflection_question exactly.
 The response must contain exactly one question mark.
 
 CONSTRAINT:
-- Do not contradict case_type or the action in delivered_opening.
+- Never decide Hit or Stand from the hand. Use only correct_action.
+- Do not contradict case_type, is_correct, student_action, correct_action, required_opening, required_meaning, or forbidden_claims.
+- Do not say the student must beat the assumed dealer total exactly.
 - Do not invent fractions. Use only values from context.
-- Do not say a soft hand can bust if player_bust_fraction_if_hit is "0 out of 52".
-- When case_type is dealer_bust_risk_exception, do not use "let the dealer bust" framing — use the exception reason from must_use_reason.
+- Do not convert fractions into percentages, rate notation, or phrases like "zero percent".
+- Do not say any hand can bust if player_bust_fraction_if_hit is "0 out of 52".
+- When case_type is dealer_bust_risk_exception, do not use "let the dealer bust" framing — use the exception reason from required_reason.
 - Do not mention Split, Double, card counting, betting, or expected value.
 - Do not say the dealer definitely has a 10 hidden. Say "we assume".
 
@@ -65,7 +68,13 @@ GLOBAL CONSTRAINT:
 - Never contradict answer_result. If answer_result is "correct", confirm. If "incorrect", correct.
 - Never invent fractions. Use only values provided in context.
 - Never recommend an action that contradicts level1_probability_action when it is provided.
+- When correct_action is provided, never recommend an action that contradicts correct_action.
+- Preserve required_meaning and required_reason when they are provided.
+- The student's explanation may be reasonable even if their action was wrong. Do not change is_correct.
+- Do not say the student must beat the assumed dealer total exactly.
 - Never say a soft hand can bust if player_bust_fraction_if_hit is "0 out of 52".
+- Never say any hand can bust if player_bust_fraction_if_hit is "0 out of 52".
+- Do not convert fractions into percentages, rate notation, or phrases like "zero percent".
 - Do not mention Split, Double, card counting, betting, or expected value.
 - Do not say the dealer definitely has a 10 hidden card. Say "we assume" or "for this Level 1 rule."
 
@@ -91,13 +100,13 @@ message_type stage_answer with stage 3:
 Respond in 2 short sentences. Acknowledge their reasoning, reveal the key fraction from context, and explain why the Level 1 probability rule points to Hit or Stand.
 
 message_type feedback_reflection_answer:
-Reply in exactly 2 short sentences. Sentence 1 acknowledges the student's answer briefly. Sentence 2 uses must_use_reason to explain why the decision was correct or not. Do not ask another question. Do not contradict case_type.
+Reply in exactly 2 short sentences. Sentence 1 acknowledges the student's answer briefly without changing is_correct. Sentence 2 uses required_meaning and required_reason to explain why the app marked the decision correct or not. Do not ask another question. Do not contradict case_type, correct_action, forbidden_claims, or required_opening.
 
 message_type stage_advance:
-Acknowledge progress in 1 sentence, then say: "Type yes to move on, or more to keep practicing."
+Use only allowed_message or a very close paraphrase. Do not mention a hand, action, dealer card, bust risk, fraction, or decision result. End with exactly: "Type yes to move on, or more to keep practicing."
 
 message_type student_question:
-Answer the question directly in 2 short sentences using the facts from context. Do not introduce new concepts. Do not start with "Not quite" or "Correct" — those phrases are only for decision feedback.
+Answer the question directly in 2 short sentences using the facts from context, required_meaning, and key_fraction when provided. Do not introduce new concepts. Do not start with "Not quite" or "Correct" — those phrases are only for decision feedback.
 
 OUTPUT:
 Plain text only.`,

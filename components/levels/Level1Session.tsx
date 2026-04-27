@@ -43,7 +43,7 @@ let _msgId = 0;
 const nextMsgId = () => ++_msgId;
 
 function cleanTutorText(text: string): string {
-  const metadataLine = /^\s*(message_type|stage|student_goal|teaching_points|flow_note|forbidden|response_style|student_prompt|student_answer|student_question|decision_index|decision_result|student_action|level1_probability_action|level1_probability_action_hidden|opening_sentence|delivered_opening|must_use_reason|must_ask_question|case_type|player_hand|player_total|player_total_label|player_bust_fraction_if_hit|player_bust_fraction_hidden|player_bust_category|player_bust_category_hidden|dealer_upcard|assumed_dealer_upcard|assumed_dealer_total|assumed_dealer_total_hidden|correct_assumed_dealer_total|correct_assumed_dealer_total_hidden|assumed_dealer_bust_fraction_if_forced_to_hit|assumed_dealer_bust_fraction_if_forced_to_hit_hidden|hand_outcome|session_accuracy|answer_result|estimate_result|comparison_hidden|correct_comparison|concept_covered|hands_played)\s*:/i;
+  const metadataLine = /^\s*(message_type|stage|student_goal|teaching_points|flow_note|forbidden|response_style|student_prompt|student_answer|student_question|decision_index|decision_result|student_action|correct_action|is_correct|verdict_text|level1_probability_action|level1_probability_action_hidden|opening_sentence|required_opening|delivered_opening|required_meaning|required_reason|must_use_reason|must_ask_question|reflection_question|key_fraction|key_fraction_label|key_fraction_meaning|locked_reason_fact_\d+|forbidden_claim_\d+|case_type|player_hand|player_total|player_total_label|player_bust_fraction_if_hit|player_bust_fraction_hidden|player_bust_category|player_bust_category_hidden|dealer_upcard|assumed_dealer_upcard|assumed_dealer_total|assumed_dealer_total_hidden|correct_assumed_dealer_total|correct_assumed_dealer_total_hidden|assumed_dealer_bust_fraction_if_forced_to_hit|assumed_dealer_bust_fraction_if_forced_to_hit_hidden|hand_outcome|session_accuracy|answer_result|estimate_result|comparison_hidden|correct_comparison|concept_covered|hands_played|allowed_message)\s*:/i;
   const cleanedLines = text
     .trim()
     .split(/\r?\n/)
@@ -57,6 +57,84 @@ function cleanTutorText(text: string): string {
     .filter((line) => line && !metadataLine.test(line));
 
   return cleanedLines.join(" ").replace(/\s+/g, " ").trim();
+}
+
+function getContextValue(context: string, key: string): string | null {
+  const line = context.split(/\r?\n/).find((item) => item.toLowerCase().startsWith(`${key.toLowerCase()}:`));
+  return line ? line.slice(line.indexOf(":") + 1).trim() : null;
+}
+
+function joinTutorSentences(parts: Array<string | null | undefined>): string {
+  return parts
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part))
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildFallbackTutorText(context: string): string {
+  const messageType = getContextValue(context, "message_type");
+  const requiredOpening = getContextValue(context, "required_opening");
+  const requiredMeaning = getContextValue(context, "required_meaning");
+  const requiredReason = getContextValue(context, "required_reason");
+  const reflectionQuestion = getContextValue(context, "reflection_question");
+  const allowedMessage = getContextValue(context, "allowed_message");
+  const studentAction = getContextValue(context, "student_action") as "hit" | "stand" | null;
+  const correctAction = getContextValue(context, "correct_action") as "hit" | "stand" | null;
+  const isCorrect = getContextValue(context, "is_correct") === "true";
+
+  if (messageType === "decision_feedback") {
+    const opening = requiredOpening ??
+      (studentAction && correctAction
+        ? `${isCorrect ? "Correct" : "Not quite"} - you chose ${studentAction}, ${isCorrect ? "and" : "but"} the Level 1 probability rule says ${correctAction}.`
+        : null);
+    return joinTutorSentences([opening, requiredReason ?? requiredMeaning, reflectionQuestion]);
+  }
+
+  if (messageType === "feedback_reflection_answer") {
+    return joinTutorSentences(["Thanks, that helps me see your thinking.", requiredReason ?? requiredMeaning]);
+  }
+
+  if (messageType === "stage_advance") {
+    return allowedMessage ?? "Nice work practicing this concept. Type yes to move on, or more to keep practicing.";
+  }
+
+  return requiredReason ?? requiredMeaning ?? "Let's keep using the Level 1 probability rule from the board.";
+}
+
+function containsOppositeRecommendation(text: string, context: string): boolean {
+  const correctAction = getContextValue(context, "correct_action") ?? getContextValue(context, "level1_probability_action");
+  if (correctAction !== "hit" && correctAction !== "stand") return false;
+
+  const opposite = correctAction === "hit" ? "stand" : "hit";
+  const lower = text.toLowerCase();
+  const oppositePatterns = [
+    `rule says ${opposite}`,
+    `probability says ${opposite}`,
+    `should ${opposite}`,
+    `better to ${opposite}`,
+    `${opposite} was correct`,
+    `decision to ${opposite} was correct`,
+    `correct to ${opposite}`,
+    `marked ${opposite} as correct`,
+  ];
+
+  return oppositePatterns.some((pattern) => lower.includes(pattern));
+}
+
+function contradictsZeroBustRisk(text: string, context: string): boolean {
+  if (getContextValue(context, "player_bust_fraction_if_hit") !== "0 out of 52") return false;
+  const lower = text.toLowerCase();
+  const saysNoBust = /0 out of 52|cannot bust|can't bust|would not bust|wouldn't bust|no bust risk/.test(lower);
+  const saysCanBust = /would bust|could bust|can bust|might bust|will bust|bust if you hit|bust from one hit/.test(lower);
+  return saysCanBust && !saysNoBust;
+}
+
+function isUnsafeTutorText(text: string, context: string): boolean {
+  if (/%|\bpercent\b|zero percent/i.test(text)) return true;
+  if (containsOppositeRecommendation(text, context)) return true;
+  return contradictsZeroBustRisk(text, context);
 }
 
 // ─── Sub-components ───────────────────────────────────────────────────────────
@@ -264,8 +342,12 @@ export default function Level1Session({ level }: { level: Level }) {
   const fireTutor = useCallback(
     async (action: "feedback" | "hint" | "explain", context: string) => {
       const msg = await callTutor(action, context, 1);
+      if (!msg) return;
       const cleanMsg = msg ? cleanTutorText(msg) : "";
-      if (cleanMsg) setMessages((prev) => [...prev, { id: nextMsgId(), role: "tutor", text: cleanMsg }]);
+      const safeMsg = cleanMsg && !isUnsafeTutorText(cleanMsg, context)
+        ? cleanMsg
+        : buildFallbackTutorText(context);
+      if (safeMsg) setMessages((prev) => [...prev, { id: nextMsgId(), role: "tutor", text: safeMsg }]);
     },
     [callTutor]
   );
