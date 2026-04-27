@@ -29,6 +29,9 @@ import {
   getStudentQuestionContext,
   getStageAdvanceContext,
   getStageIntroContext,
+  advanceTutorialStep,
+  getTutorialStepContext,
+  TUTORIAL_STEPS,
 } from "@/game/levels/level1/gameLogic";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -180,17 +183,19 @@ function EmptySlot() {
 }
 
 function TutorSidebar({
-  messages, loading, phase, stage,
-  onAcknowledge, onKeepPracticing, onAdvanceStage,
+  messages, loading, phase, stage, tutorialStep,
+  onAcknowledge, onKeepPracticing, onAdvanceStage, onNextTutorialStep,
   canHint, canContinueFeedback, feedbackContinueLabel, onHint, onStudentMessage,
 }: {
   messages: ChatMessage[];
   loading: boolean;
   phase: Level1Phase;
   stage: Level1Stage;
+  tutorialStep: number;
   onAcknowledge: () => void;
   onKeepPracticing: () => void;
   onAdvanceStage: () => void;
+  onNextTutorialStep: () => void;
   canHint: boolean;
   canContinueFeedback: boolean;
   feedbackContinueLabel: string;
@@ -211,14 +216,18 @@ function TutorSidebar({
     onStudentMessage(q);
   };
 
+  const isBoardIntro = phase === "board-intro";
   const isIntro = phase === "tutor-intro";
   const isAdvance = phase === "tutor-advance";
   const isFeedback = phase === "tutor-feedback";
   const isPlaying = phase === "player-turn";
+  const isLastTutorialStep = tutorialStep === TUTORIAL_STEPS.length - 1;
 
   return (
     <aside className="tutor-panel">
-      <div className="tutor-panel__heading">Tutor — Stage {stage}</div>
+      <div className="tutor-panel__heading">
+        {isBoardIntro ? "Tutor — Introduction" : `Tutor — Stage ${stage}`}
+      </div>
 
       <div className="tutor-panel__messages">
         {messages.length === 0 && !loading && (
@@ -251,6 +260,19 @@ function TutorSidebar({
       </div>
 
       <div style={{ borderTop: "1px solid #374151" }}>
+        {isBoardIntro && (
+          <div style={{ padding: "0.75rem 1rem" }}>
+            <button
+              className="action-btn"
+              onClick={onNextTutorialStep}
+              disabled={loading || messages.length === 0}
+              style={{ width: "100%" }}
+            >
+              {isLastTutorialStep ? "Let's Start" : "Next →"}
+            </button>
+          </div>
+        )}
+
         {isIntro && (
           <div style={{ padding: "0.75rem 1rem" }}>
             <button
@@ -354,6 +376,7 @@ export default function Level1Session({ level }: { level: Level }) {
   void level;
 
   const mountFiredRef = useRef(false);
+  const lastTutorialStepRef = useRef(-1);
   const lastQuestionedHandRef = useRef(-1);
   const lastAnsweredHandRef = useRef(-1);
 
@@ -378,13 +401,23 @@ export default function Level1Session({ level }: { level: Level }) {
     [callTutor]
   );
 
-  // Stage 0 intro on mount
+  // Tutorial board-intro: fire tutor explanation for each step
   useEffect(() => {
+    if (state.phase !== "board-intro") return;
+    if (lastTutorialStepRef.current === state.tutorialStep) return;
+    lastTutorialStepRef.current = state.tutorialStep;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fireTutor("explain", getTutorialStepContext(state.tutorialStep));
+  }, [state.phase, state.tutorialStep]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stage 0 intro: fires once when transitioning from board-intro into tutor-intro
+  useEffect(() => {
+    if (state.phase !== "tutor-intro" || state.stage !== 0) return;
     if (mountFiredRef.current) return;
     mountFiredRef.current = true;
     // eslint-disable-next-line react-hooks/set-state-in-effect
     fireTutor("explain", getStageIntroContext(0));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [state.phase, state.stage]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Stage intro for stages 1-4 when entering tutor-intro
   useEffect(() => {
@@ -441,6 +474,10 @@ export default function Level1Session({ level }: { level: Level }) {
   }, [state.phase, state.handId]);
 
   // ── Action handlers ──────────────────────────────────────────────────────────
+
+  const handleNextTutorialStep = useCallback(() => {
+    setState((s) => advanceTutorialStep(s));
+  }, []);
 
   const handleAcknowledge = useCallback(() => {
     setState((s) => {
@@ -529,6 +566,9 @@ export default function Level1Session({ level }: { level: Level }) {
 
   // ── Derived values ───────────────────────────────────────────────────────────
 
+  const isBoardIntro = state.phase === "board-intro";
+  const tutorialTarget = isBoardIntro ? TUTORIAL_STEPS[state.tutorialStep]?.target ?? null : null;
+
   const playerTotal = state.playerHand.length > 0 ? calculateHandValue(state.playerHand) : null;
   const dealerReveal =
     state.phase === "round-over" ||
@@ -539,7 +579,7 @@ export default function Level1Session({ level }: { level: Level }) {
   const tenFraction = formatCardFraction(TEN_VALUE_CARD_COUNT);
   const handInProgress =
     state.playerHand.length > 0 &&
-    (state.phase === "player-turn" || state.phase === "tutor-feedback" || state.phase === "dealer-turn");
+    (isBoardIntro || state.phase === "player-turn" || state.phase === "tutor-feedback" || state.phase === "dealer-turn");
   const playerBustFraction =
     state.playerHand.length > 0 && state.playerBustProbability !== null
       ? getPlayerBustFraction(state.playerHand)
@@ -617,7 +657,14 @@ export default function Level1Session({ level }: { level: Level }) {
       <div className="game-board">
 
         {/* HUD — top left */}
-        <div className="floor-tl">
+        <div
+          className="floor-tl"
+          style={tutorialTarget === "hud-stats" ? {
+            zIndex: 20,
+            borderRadius: "0.5rem",
+            boxShadow: "0 0 0 3px #fbbf24, 0 0 24px rgba(251,191,36,0.35)",
+          } : undefined}
+        >
           <div className="game-hud">
             <div className="game-hud__stat">
               <span className="game-hud__label">Stage</span>
@@ -628,7 +675,7 @@ export default function Level1Session({ level }: { level: Level }) {
               <span className="game-hud__label">Ten-Value Cards</span>
               <span className="game-hud__value game-hud__value--pos">{tenFraction}</span>
             </div>
-            {actionsEnabled && playerBustFraction !== null && (
+            {(actionsEnabled || isBoardIntro) && playerBustFraction !== null && (
               <>
                 <div className="game-hud__divider" />
                 <div className="game-hud__stat">
@@ -675,9 +722,28 @@ export default function Level1Session({ level }: { level: Level }) {
           </div>
         </div>
 
+        {/* Tutorial overlay — dims the board while a specific element is spotlit */}
+        {tutorialTarget && (
+          <div style={{
+            position: "absolute", inset: 0,
+            background: "rgba(0,0,0,0.65)",
+            zIndex: 15, pointerEvents: "none",
+          }} />
+        )}
+
         {/* Felt table */}
-        <div className="felt-table">
-          <div className="felt-table__dealer">
+        <div
+          className="felt-table"
+          style={
+            tutorialTarget === "dealer-area" || tutorialTarget === "player-area"
+              ? { position: "relative", zIndex: 20, boxShadow: "0 0 0 3px #fbbf24, 0 0 30px rgba(251,191,36,0.4)" }
+              : undefined
+          }
+        >
+          <div
+            className="felt-table__dealer"
+            style={tutorialTarget === "dealer-area" ? { background: "#256b35" } : undefined}
+          >
             <p className="felt-table__zone-label">
               Dealer{dealerTotal !== null ? ` — ${dealerTotal}` : ""}
             </p>
@@ -693,7 +759,10 @@ export default function Level1Session({ level }: { level: Level }) {
 
           <div className="felt-table__divider" />
 
-          <div className="felt-table__player">
+          <div
+            className="felt-table__player"
+            style={tutorialTarget === "player-area" ? { background: "#256b35" } : undefined}
+          >
             <div className="felt-table__cards">
               {state.playerHand.length === 0
                 ? <><EmptySlot /><EmptySlot /></>
@@ -732,7 +801,16 @@ export default function Level1Session({ level }: { level: Level }) {
         )}
 
         {/* Hit / Stand */}
-        <div className="floor-bl">
+        <div
+          className="floor-bl"
+          style={tutorialTarget === "action-btns" ? {
+            zIndex: 20,
+            padding: "0.5rem",
+            background: "rgba(0,0,0,0.5)",
+            borderRadius: "0.5rem",
+            boxShadow: "0 0 0 3px #fbbf24, 0 0 24px rgba(251,191,36,0.35)",
+          } : undefined}
+        >
           <button className="action-btn" onClick={handleHit} disabled={!actionsEnabled}>
             Hit
           </button>
@@ -747,9 +825,11 @@ export default function Level1Session({ level }: { level: Level }) {
         loading={tutorLoading}
         phase={state.phase}
         stage={state.stage}
+        tutorialStep={state.tutorialStep}
         onAcknowledge={handleAcknowledge}
         onKeepPracticing={handleKeepPracticing}
         onAdvanceStage={handleAdvanceStage}
+        onNextTutorialStep={handleNextTutorialStep}
         canHint={actionsEnabled}
         canContinueFeedback={canContinueFeedback}
         feedbackContinueLabel={feedbackContinueLabel}

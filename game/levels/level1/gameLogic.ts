@@ -5,6 +5,7 @@ import { initShoe, dealCard } from "@/game/deckState";
 
 export type Level1Stage = 0 | 1 | 2 | 3 | 4;
 export type Level1Phase =
+  | "board-intro"
   | "tutor-intro"
   | "player-turn"
   | "dealer-turn"
@@ -81,6 +82,7 @@ export interface Level1TutorPacket {
 export interface Level1State {
   stage: Level1Stage;
   phase: Level1Phase;
+  tutorialStep: number;
   shoe: DeckState;
   playerHand: Card[];
   dealerHand: Card[];
@@ -339,13 +341,96 @@ function buildForbiddenClaims(caseType: Level1CaseType, correctAction: "hit" | "
   return claims;
 }
 
+export const TUTORIAL_STEPS = [
+  { target: "dealer-area" },
+  { target: "player-area" },
+  { target: "hud-stats" },
+  { target: "action-btns" },
+  { target: "tutor-panel" },
+] as const;
+
+export type TutorialTarget = typeof TUTORIAL_STEPS[number]["target"];
+
+// Fixed example hand: player K♠+6♥=16, dealer shows 6♦ (assumed 16, bust risk case)
+const TUTORIAL_PLAYER_HAND: Card[] = [
+  { id: "tutorial-p1", suit: "spades", rank: "K", blackjackValue: 10, hiLoValue: -1 },
+  { id: "tutorial-p2", suit: "hearts", rank: "6", blackjackValue: 6, hiLoValue: 1 },
+];
+const TUTORIAL_DEALER_HAND: Card[] = [
+  { id: "tutorial-d1", suit: "diamonds", rank: "6", blackjackValue: 6, hiLoValue: 1 },
+  { id: "tutorial-d2", suit: "clubs", rank: "K", blackjackValue: 10, hiLoValue: -1 },
+];
+
+export function getTutorialStepContext(step: number): string {
+  const steps = [
+    [
+      "message_type: board_intro",
+      "tutorial_step: 1 of 5",
+      "element: dealer_hand",
+      "teaching_point: The top half of the table shows the dealer's hand. The dealer receives two cards — one face-up (the upcard, visible to you) and one face-down (the hole card, hidden until the end of the round).",
+      "teaching_point: The upcard is the only information about the dealer you have. Every decision you make starts there.",
+      "response_style: 2 warm welcoming sentences about the dealer area; treat the student as a total beginner",
+    ],
+    [
+      "message_type: board_intro",
+      "tutorial_step: 2 of 5",
+      "element: player_hand",
+      "teaching_point: The bottom half of the table shows your hand. Both your cards are face-up. Your total is displayed below your cards.",
+      "teaching_point: Your goal is to finish closer to 21 than the dealer without going over. Going over 21 is called busting.",
+      "response_style: 2 warm sentences about the player hand and goal",
+    ],
+    [
+      "message_type: board_intro",
+      "tutorial_step: 3 of 5",
+      "element: stats_panel",
+      "teaching_point: The stats panel in the top-left corner shows three numbers. Ten-Value Cards shows how many 10-value cards (10, J, Q, K) are in a deck — always 16 out of 52. Since 10s are the most common value, we assume the dealer's hidden card is a 10.",
+      "teaching_point: Assumed Dealer adds the dealer's upcard to 10, giving us our best estimate of what the dealer holds. Bust If Hit shows how many cards in the deck would push your total over 21 if you took another card.",
+      "response_style: 2-3 clear sentences explaining the three stats simply",
+    ],
+    [
+      "message_type: board_intro",
+      "tutorial_step: 4 of 5",
+      "element: action_buttons",
+      "teaching_point: Hit means take another card from the deck, hoping to improve your total. Stand means keep your hand as-is and let the dealer play.",
+      "teaching_point: In this level, Hit and Stand are your only two choices.",
+      "response_style: 2 short sentences; plain and direct",
+    ],
+    [
+      "message_type: board_intro",
+      "tutorial_step: 5 of 5",
+      "element: tutor_panel",
+      "teaching_point: This panel is where I — the tutor — will guide you. After each decision I will explain whether you were correct and why, using the exact fractions from the stats panel. You can also ask me questions or request a hint during your turn.",
+      "response_style: 2-3 warm encouraging sentences about the tutor; end with an inviting prompt to begin",
+    ],
+  ];
+  return (steps[step] ?? ["message_type: board_intro", "response_style: welcome the student warmly in 2 sentences"]).join("\n");
+}
+
+export function advanceTutorialStep(state: Level1State): Level1State {
+  if (state.phase !== "board-intro") return state;
+  const nextStep = state.tutorialStep + 1;
+  if (nextStep >= TUTORIAL_STEPS.length) {
+    return {
+      ...state,
+      phase: "tutor-intro",
+      tutorialStep: 0,
+      playerHand: [],
+      dealerHand: [],
+      assumedDealerTotal: null,
+      playerBustProbability: null,
+    };
+  }
+  return { ...state, tutorialStep: nextStep };
+}
+
 export function getInitialLevel1State(): Level1State {
   return {
     stage: 0,
-    phase: "tutor-intro",
+    phase: "board-intro",
+    tutorialStep: 0,
     shoe: initShoe(6),
-    playerHand: [],
-    dealerHand: [],
+    playerHand: TUTORIAL_PLAYER_HAND,
+    dealerHand: TUTORIAL_DEALER_HAND,
     handId: 0,
     handsInStage: 0,
     correctDecisions: 0,
@@ -358,8 +443,8 @@ export function getInitialLevel1State(): Level1State {
     pendingHitCard: null,
     sessionWins: 0,
     sessionLosses: 0,
-    assumedDealerTotal: null,
-    playerBustProbability: null,
+    assumedDealerTotal: 16,
+    playerBustProbability: 32 / 52,
     sessionComplete: false,
   };
 }
