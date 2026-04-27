@@ -43,7 +43,7 @@ let _msgId = 0;
 const nextMsgId = () => ++_msgId;
 
 function cleanTutorText(text: string): string {
-  const metadataLine = /^\s*(message_type|stage|student_goal|teaching_points|flow_note|forbidden|response_style|student_prompt|student_answer|student_question|decision_index|decision_result|student_action|correct_action|is_correct|verdict_text|level1_probability_action|level1_probability_action_hidden|opening_sentence|required_opening|delivered_opening|required_meaning|required_reason|must_use_reason|must_ask_question|reflection_question|key_fraction|key_fraction_label|key_fraction_meaning|locked_reason_fact_\d+|forbidden_claim_\d+|case_type|player_hand|player_total|player_total_label|player_bust_fraction_if_hit|player_bust_fraction_hidden|player_bust_category|player_bust_category_hidden|dealer_upcard|assumed_dealer_upcard|assumed_dealer_total|assumed_dealer_total_hidden|correct_assumed_dealer_total|correct_assumed_dealer_total_hidden|assumed_dealer_bust_fraction_if_forced_to_hit|assumed_dealer_bust_fraction_if_forced_to_hit_hidden|hand_outcome|session_accuracy|answer_result|estimate_result|comparison_hidden|correct_comparison|concept_covered|hands_played|allowed_message)\s*:/i;
+  const metadataLine = /^\s*(message_type|stage|student_goal|teaching_points|flow_note|forbidden|response_style|student_prompt|student_answer|student_question|decision_index|decision_result|student_action|correct_action|is_correct|verdict_text|action_alignment|teaching_focus|level1_probability_action|level1_probability_action_hidden|opening_sentence|required_opening|delivered_opening|required_meaning|required_reason|must_use_reason|must_ask_question|reflection_question|key_fraction|key_fraction_label|key_fraction_meaning|locked_reason_fact_\d+|locked_fact_\d+|forbidden_claim_\d+|case_type|player_hand|player_total|player_total_label|player_bust_fraction_if_hit|player_bust_fraction_hidden|player_bust_category|player_bust_category_hidden|dealer_upcard|assumed_dealer_upcard|assumed_dealer_total|assumed_dealer_total_hidden|correct_assumed_dealer_total|correct_assumed_dealer_total_hidden|assumed_dealer_bust_fraction_if_forced_to_hit|assumed_dealer_bust_fraction_if_forced_to_hit_hidden|hand_outcome|session_accuracy|answer_result|estimate_result|comparison_hidden|correct_comparison|concept_covered|hands_played|allowed_message)\s*:/i;
   const cleanedLines = text
     .trim()
     .split(/\r?\n/)
@@ -52,6 +52,9 @@ function cleanTutorText(text: string): string {
         .replace(/^\s*(Explain|Game state|Tutor request|Task)\s*:\s*/i, "")
         .replace(/^\s*\[[A-Z0-9_]+\]\s*/i, "")
         .replace(/^\s*Stage\s+\d+\s*:\s*/i, "")
+        .replace(/^\s*(?:Sentence|Part)\s*\d+\s*[:\-–—]\s*/i, "")
+        .replace(/^\s*Response\s*[:\-–—]\s*/i, "")
+        .replace(/^\s*(?:first|second|third)\s*[:\-–—]\s*/i, "")
         .trim()
     )
     .filter((line) => line && !metadataLine.test(line));
@@ -62,6 +65,15 @@ function cleanTutorText(text: string): string {
 function getContextValue(context: string, key: string): string | null {
   const line = context.split(/\r?\n/).find((item) => item.toLowerCase().startsWith(`${key.toLowerCase()}:`));
   return line ? line.slice(line.indexOf(":") + 1).trim() : null;
+}
+
+function getContextValues(context: string, keyPrefix: string): string[] {
+  const lowerPrefix = keyPrefix.toLowerCase();
+  return context
+    .split(/\r?\n/)
+    .filter((item) => item.toLowerCase().startsWith(lowerPrefix))
+    .map((item) => item.slice(item.indexOf(":") + 1).trim())
+    .filter(Boolean);
 }
 
 function joinTutorSentences(parts: Array<string | null | undefined>): string {
@@ -75,32 +87,46 @@ function joinTutorSentences(parts: Array<string | null | undefined>): string {
 
 function buildFallbackTutorText(context: string): string {
   const messageType = getContextValue(context, "message_type");
-  const requiredOpening = getContextValue(context, "required_opening");
   const requiredMeaning = getContextValue(context, "required_meaning");
-  const requiredReason = getContextValue(context, "required_reason");
   const reflectionQuestion = getContextValue(context, "reflection_question");
   const allowedMessage = getContextValue(context, "allowed_message");
+  const keyFraction = getContextValue(context, "key_fraction");
+  const keyFractionMeaning = getContextValue(context, "key_fraction_meaning");
+  const teachingFocus = getContextValue(context, "teaching_focus");
+  const lockedFact = getContextValues(context, "locked_fact_")[0];
   const studentAction = getContextValue(context, "student_action") as "hit" | "stand" | null;
   const correctAction = getContextValue(context, "correct_action") as "hit" | "stand" | null;
   const isCorrect = getContextValue(context, "is_correct") === "true";
 
   if (messageType === "decision_feedback") {
-    const opening = requiredOpening ??
-      (studentAction && correctAction
-        ? `${isCorrect ? "Correct" : "Not quite"} - you chose ${studentAction}, ${isCorrect ? "and" : "but"} the Level 1 probability rule says ${correctAction}.`
-        : null);
-    return joinTutorSentences([opening, requiredReason ?? requiredMeaning, reflectionQuestion]);
+    let opening: string | null = null;
+    if (studentAction && correctAction) {
+      if (isCorrect && correctAction === "hit") {
+        opening = `That matches the Level 1 rule: you hit, and hit is the right call here.`;
+      } else if (isCorrect && correctAction === "stand") {
+        opening = `Good stop: you stood, and stand is what the Level 1 rule calls for here.`;
+      } else {
+        opening = `Not quite: you chose ${studentAction}, but the Level 1 rule calls for ${correctAction} here.`;
+      }
+    }
+    const explanation = keyFraction && keyFractionMeaning
+      ? `${requiredMeaning} ${keyFraction} matters here: ${keyFractionMeaning.toLowerCase()}`
+      : requiredMeaning ?? lockedFact ?? teachingFocus;
+    return joinTutorSentences([opening, explanation, reflectionQuestion]);
   }
 
   if (messageType === "feedback_reflection_answer") {
-    return joinTutorSentences(["Thanks, that helps me see your thinking.", requiredReason ?? requiredMeaning]);
+    const explanation = keyFraction
+      ? `${requiredMeaning} The key fraction is ${keyFraction}.`
+      : requiredMeaning ?? lockedFact;
+    return joinTutorSentences(["That reasoning makes sense to look at.", explanation]);
   }
 
   if (messageType === "stage_advance") {
     return allowedMessage ?? "Nice work practicing this concept. Type yes to move on, or more to keep practicing.";
   }
 
-  return requiredReason ?? requiredMeaning ?? "Let's keep using the Level 1 probability rule from the board.";
+  return requiredMeaning ?? lockedFact ?? "Let's keep using the Level 1 probability rule from the board.";
 }
 
 function containsOppositeRecommendation(text: string, context: string): boolean {

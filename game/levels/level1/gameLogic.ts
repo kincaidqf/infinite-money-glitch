@@ -45,6 +45,8 @@ export interface Level1DecisionReview {
   keyFractionLabel: Level1KeyFractionLabel;
   keyFraction: string;
   keyFractionMeaning: string;
+  actionAlignment: string;
+  teachingFocus: string;
   lockedRuleMeaning: string;
   lockedReasonFacts: string[];
   forbiddenClaims: string[];
@@ -67,6 +69,9 @@ export interface Level1TutorPacket {
   caseType: Level1CaseType;
   keyFractionLabel: Level1KeyFractionLabel;
   keyFraction: string;
+  keyFractionMeaning: string;
+  actionAlignment: string;
+  teachingFocus: string;
   lockedRuleMeaning: string;
   lockedReasonFacts: string[];
   forbiddenClaims: string[];
@@ -267,6 +272,17 @@ function getKeyFractionMeaning(label: Level1KeyFractionLabel): string {
   return "This is the player's bust risk if they hit.";
 }
 
+function buildActionAlignment(isCorrect: boolean): string {
+  return isCorrect ? "student action matched the rule" : "student action differed from the rule";
+}
+
+function buildTeachingFocus(caseType: Level1CaseType): string {
+  if (caseType === "dealer_bust_risk") return "letting an assumed 12-16 dealer total take the bust risk";
+  if (caseType === "dealer_bust_risk_exception") return "taking a safe hit with a hard total that cannot bust";
+  if (caseType === "dealer_strong_hit") return "hitting below 17 against a strong assumed dealer total";
+  return "stopping at 17 or higher against a strong assumed dealer total";
+}
+
 function buildLockedRuleMeaning(
   caseType: Level1CaseType,
   playerTotalLabel: string,
@@ -401,6 +417,8 @@ function recordDecision(state: Level1State, action: "hit" | "stand"): Partial<Le
   const keyFractionLabel = getKeyFractionLabel(caseType);
   const keyFraction = keyFractionLabel === "dealer_assumed_bust" ? assumedDealerBustFraction : playerBustFraction;
   const keyFractionMeaning = getKeyFractionMeaning(keyFractionLabel);
+  const actionAlignment = buildActionAlignment(isCorrect);
+  const teachingFocus = buildTeachingFocus(caseType);
   const lockedRuleMeaning = buildLockedRuleMeaning(caseType, playerTotalLabel, assumedDealerTotal);
   const lockedReasonFacts = buildLockedReasonFacts(
     caseType,
@@ -426,6 +444,8 @@ function recordDecision(state: Level1State, action: "hit" | "stand"): Partial<Le
     keyFractionLabel,
     keyFraction,
     keyFractionMeaning,
+    actionAlignment,
+    teachingFocus,
     lockedRuleMeaning,
     lockedReasonFacts,
     forbiddenClaims,
@@ -547,6 +567,9 @@ function buildTutorPacket(messageType: Level1TutorMessageType, d: Level1Decision
     caseType: d.caseType,
     keyFractionLabel: d.keyFractionLabel,
     keyFraction: d.keyFraction,
+    keyFractionMeaning: d.keyFractionMeaning,
+    actionAlignment: d.actionAlignment,
+    teachingFocus: d.teachingFocus,
     lockedRuleMeaning: d.lockedRuleMeaning,
     lockedReasonFacts: d.lockedReasonFacts,
     forbiddenClaims: d.forbiddenClaims,
@@ -567,8 +590,11 @@ function packetToLines(packet: Level1TutorPacket): string[] {
     `assumed_dealer_total: ${packet.assumedDealerTotal}`,
     `key_fraction_label: ${packet.keyFractionLabel}`,
     `key_fraction: ${packet.keyFraction}`,
+    `key_fraction_meaning: ${packet.keyFractionMeaning}`,
+    `action_alignment: ${packet.actionAlignment}`,
+    `teaching_focus: ${packet.teachingFocus}`,
     `required_meaning: ${packet.lockedRuleMeaning}`,
-    ...packet.lockedReasonFacts.map((fact, index) => `locked_reason_fact_${index + 1}: ${fact}`),
+    ...packet.lockedReasonFacts.map((fact, index) => `locked_fact_${index + 1}: ${fact}`),
     ...packet.forbiddenClaims.map((claim, index) => `forbidden_claim_${index + 1}: ${claim}`),
     `reflection_question: ${packet.reflectionQuestion}`,
   ];
@@ -581,11 +607,8 @@ export function getHandFeedbackContext(state: Level1State): string {
 
   return [
     ...packetToLines(packet),
-    `required_opening: ${d.openingSentence}`,
-    `required_reason: ${d.reasonSentence}`,
     `player_bust_fraction_if_hit: ${d.playerBustFraction}`,
     `assumed_dealer_bust_fraction_if_forced_to_hit: ${d.assumedDealerBustFraction}`,
-    `key_fraction_meaning: ${d.keyFractionMeaning}`,
   ].join("\n");
 }
 
@@ -769,11 +792,8 @@ export function getFeedbackReflectionContext(state: Level1State, answer: string)
   return [
     ...packetToLines(packet),
     `student_answer: ${JSON.stringify(answer)}`,
-    `required_opening: ${d.openingSentence}`,
-    `required_reason: ${d.reasonSentence}`,
     `player_bust_fraction_if_hit: ${d.playerBustFraction}`,
     `assumed_dealer_bust_fraction_if_forced_to_hit: ${d.assumedDealerBustFraction}`,
-    `key_fraction_meaning: ${d.keyFractionMeaning}`,
   ].join("\n");
 }
 
